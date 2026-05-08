@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-tank-operator
+  namespace: mcp-tank-operator
+spec:
+  replicas: 1
+  # Single-node cluster can't fit two replicas during a rolling-update surge.
+  # Recreate keeps the rollout unstuck.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mcp-tank-operator
+  template:
+    metadata:
+      labels:
+        app: mcp-tank-operator
+    spec:
+      serviceAccountName: mcp-tank-operator
+      containers:
+        - name: mcp-tank-operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: upstream
+              containerPort: {{ .Values.upstreamPort }}
+          env:
+            - name: PORT
+              value: "{{ .Values.upstreamPort }}"
+            # In-cluster orchestrator URL for /api/internal/sessions/* calls.
+            - name: ORCHESTRATOR_INTERNAL_URL
+              value: "{{ .Values.orchestratorUrl }}"
+          readinessProbe:
+            # Server binds 127.0.0.1 (loopback only) — exec probe runs
+            # inside the container's netns so localhost resolves.
+            exec:
+              command: ["python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', {{ .Values.upstreamPort }})); s.close()"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        - name: kube-rbac-proxy
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          args:
+            - --insecure-listen-address=0.0.0.0:{{ .Values.proxy.port }}
+            - --upstream=http://127.0.0.1:{{ .Values.upstreamPort }}/
+            - --config-file=/etc/kube-rbac-proxy/config.yaml
+            - --v=2
+          ports:
+            - name: proxy
+              containerPort: {{ .Values.proxy.port }}
+          volumeMounts:
+            - name: proxy-config
+              mountPath: /etc/kube-rbac-proxy
+              readOnly: true
+          resources:
+            {{- toYaml .Values.proxyResources | nindent 12 }}
+      volumes:
+        - name: proxy-config
+          configMap:
+            name: kube-rbac-proxy
