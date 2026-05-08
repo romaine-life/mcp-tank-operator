@@ -1,0 +1,4 @@
+apiVersion: v2
+name: mcp-tank-operator
+version: 0.1.0
+description: Tank-operator MCP Server (HTTP). Session pods call /api/internal/sessions/* on the orchestrator; kube-rbac-proxy gates inbound auth via K8s SA TokenReview.

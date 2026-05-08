@@ -1,0 +1,43 @@
+# kube-rbac-proxy config: gates inbound requests on SubjectAccessReview against
+# the synthetic mcp.tank-operator.io/servers/tank-operator resource. The
+# ClusterRole below grants get+create to the claude-session SA (shared by all
+# session pods), so any session pod's projected SA token is authorized.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-rbac-proxy
+  namespace: mcp-tank-operator
+data:
+  config.yaml: |
+    authorization:
+      resourceAttributes:
+        apiGroup: mcp.tank-operator.io
+        resource: servers
+        name: tank-operator
+        namespace: mcp-tank-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-tank-operator-invoker
+rules:
+  - apiGroups: ["mcp.tank-operator.io"]
+    resources: ["servers"]
+    resourceNames: ["tank-operator"]
+    # GET (SSE) + POST (JSON-RPC) — kube-rbac-proxy auto-derives the
+    # verb from the HTTP method.
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-tank-operator-invoker
+  namespace: mcp-tank-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mcp-tank-operator-invoker
+subjects:
+  - kind: ServiceAccount
+    name: claude-session
+    namespace: tank-operator-sessions

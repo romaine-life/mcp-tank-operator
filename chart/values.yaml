@@ -1,0 +1,42 @@
+# ============================================================================
+# mcp-tank-operator values
+# ============================================================================
+# This server has no Azure surface — it only talks to the tank-operator
+# orchestrator's /api/internal/sessions/* API using the pod's projected SA
+# token. No UAMI, no ExternalSecret, no KV-mounted credentials.
+
+image:
+  repository: romainecr.azurecr.io/mcp-tank-operator
+  # SHA-pinned. .github/workflows/build.yml rewrites this tag on every push to
+  # main via a [skip ci] follow-up commit. Quoted so all-digit short-SHAs
+  # don't get parsed as floats.
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Loopback-only port the Python uvicorn server listens on.
+upstreamPort: 8080
+
+proxy:
+  image:
+    repository: quay.io/brancz/kube-rbac-proxy
+    tag: v0.18.2
+    pullPolicy: IfNotPresent
+  port: 8443
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+proxyResources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+# In-cluster URL to the tank-operator orchestrator. The MCP server passes its
+# SA token here to authenticate to /api/internal/sessions/*.
+orchestratorUrl: http://tank-operator.tank-operator.svc:80
