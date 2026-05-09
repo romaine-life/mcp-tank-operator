@@ -117,6 +117,32 @@ class TankClient:
         _check(r)
         return r.json()
 
+    def set_test_environment(
+        self,
+        caller_pod_ip: str,
+        session_id: str,
+        active: bool = True,
+        slot_index: int | None = None,
+        url: str | None = None,
+        lease_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"active": active}
+        if slot_index is not None:
+            body["slot_index"] = slot_index
+        if url:
+            body["url"] = url
+        if lease_id:
+            body["lease_id"] = lease_id
+        r = httpx.post(
+            f"{self._url}/api/internal/sessions/{session_id}/test-state",
+            params={"caller_pod_ip": caller_pod_ip},
+            json=body,
+            headers=self._headers(),
+            timeout=15.0,
+        )
+        _check(r)
+        return r.json()
+
     def send_message(
         self,
         caller_pod_ip: str,

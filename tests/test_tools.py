@@ -126,6 +126,28 @@ def test_set_session_name_delegates_to_client(mcp_client_pair) -> None:
     assert result["name"] == "watcher"
 
 
+def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.set_test_environment.return_value = {"id": "abc", "test_state": {"slot_index": 2}}
+    fn = _get_tool(mcp, "set_test_environment")
+    with _set_ip("10.0.0.5"):
+        result = fn(
+            session_id="abc",
+            slot_index=2,
+            url="https://tank-slot-2.tank.dev.romaine.life",
+            lease_id="lease-123",
+        )
+    client.set_test_environment.assert_called_once_with(
+        "10.0.0.5",
+        session_id="abc",
+        active=True,
+        slot_index=2,
+        url="https://tank-slot-2.tank.dev.romaine.life",
+        lease_id="lease-123",
+    )
+    assert result["test_state"]["slot_index"] == 2
+
+
 # ---------------------------------------------------------------------------
 # get_session_url
 # ---------------------------------------------------------------------------

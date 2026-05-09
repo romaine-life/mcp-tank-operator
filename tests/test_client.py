@@ -156,6 +156,32 @@ def test_set_session_name_clears_name_with_none(client: TankClient) -> None:
     assert mock_patch.call_args.kwargs["json"] == {"name": None}
 
 
+def test_set_test_environment_sends_post(client: TankClient) -> None:
+    session = {
+        "id": "abc",
+        "test_state": {
+            "active": True,
+            "slot_index": 2,
+            "url": "https://tank-slot-2.tank.dev.romaine.life",
+        },
+    }
+    with patch("httpx.post", return_value=_ok_response(session)) as mock_post:
+        result = client.set_test_environment(
+            "10.0.0.1",
+            session_id="abc",
+            slot_index=2,
+            url="https://tank-slot-2.tank.dev.romaine.life",
+        )
+
+    assert result["test_state"]["slot_index"] == 2
+    assert "sessions/abc/test-state" in mock_post.call_args.args[0]
+    assert mock_post.call_args.kwargs["json"] == {
+        "active": True,
+        "slot_index": 2,
+        "url": "https://tank-slot-2.tank.dev.romaine.life",
+    }
+
+
 # ---------------------------------------------------------------------------
 # send_message
 # ---------------------------------------------------------------------------

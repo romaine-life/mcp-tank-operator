@@ -75,6 +75,29 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         return client.set_session_name(_pod_ip(), session_id=session_id, name=name)
 
     @mcp.tool()
+    def set_test_environment(
+        session_id: str,
+        slot_index: int | None = None,
+        url: str | None = None,
+        lease_id: str | None = None,
+        active: bool = True,
+    ) -> dict[str, Any]:
+        """Update Tank's GUI test pill for a caller-owned session.
+
+        Call this after reserving a Glimmung test slot so the Tank UI can show
+        the beaker pill as active, display the slot number, and link to the
+        test environment. Pass active=False to clear the state.
+        """
+        return client.set_test_environment(
+            _pod_ip(),
+            session_id=session_id,
+            active=active,
+            slot_index=slot_index,
+            url=url,
+            lease_id=lease_id,
+        )
+
+    @mcp.tool()
     def get_session_url(session_id: str) -> dict[str, str]:
         """Return the tank UI URL for a session.
 
