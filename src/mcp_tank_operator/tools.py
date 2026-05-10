@@ -72,6 +72,18 @@ def _resolve_session_ref(sessions: list[dict[str, Any]], session_ref: str) -> di
     raise ValueError(f"session {session_ref!r} not found or not owned by caller")
 
 
+def _session_ref_summary(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": session.get("id"),
+        "name": session.get("name"),
+        "display_name": _session_display_name(session),
+        "pod_name": session.get("pod_name"),
+        "mode": session.get("mode"),
+        "status": session.get("status"),
+        "url": session.get("url"),
+    }
+
+
 def register_tools(mcp: FastMCP, client: TankClient) -> None:
     @mcp.tool()
     def list_sessions() -> list[dict[str, Any]]:
@@ -83,6 +95,18 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         session you spawned has started.
         """
         return client.list_sessions(_pod_ip())
+
+    @mcp.tool()
+    def list_session_refs() -> list[dict[str, Any]]:
+        """List the session ids and Tank UI names owned by the caller.
+
+        This is the low-noise discovery tool to use when the user refers to a
+        session by the name shown in the Tank sidebar. `display_name` is the
+        effective UI label: the friendly `name` when one is set, otherwise the
+        default short id derived from the pod/session id. Pass either `id` or
+        `display_name` to resolve_session.
+        """
+        return [_session_ref_summary(session) for session in client.list_sessions(_pod_ip())]
 
     @mcp.tool()
     def resolve_session(session_ref: str) -> dict[str, Any]:

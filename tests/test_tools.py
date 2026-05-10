@@ -97,6 +97,57 @@ def test_create_session_delegates_to_client(mcp_client_pair) -> None:
 
 
 # ---------------------------------------------------------------------------
+# list_session_refs
+# ---------------------------------------------------------------------------
+
+
+def test_list_session_refs_returns_names_and_ids(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {
+            "id": "abc",
+            "name": "tank test",
+            "pod_name": "session-abc",
+            "mode": "codex_gui",
+            "status": "Running",
+            "url": "https://tank.romaine.life/?session=abc",
+        },
+        {
+            "id": "05e41f7bfe",
+            "name": None,
+            "pod_name": "session-05e41f7bfe",
+            "mode": "codex_gui",
+            "status": "Running",
+            "url": "https://tank.romaine.life/?session=05e41f7bfe",
+        },
+    ]
+    fn = _get_tool(mcp, "list_session_refs")
+    with _set_ip("10.0.0.5"):
+        result = fn()
+    client.list_sessions.assert_called_once_with("10.0.0.5")
+    assert result == [
+        {
+            "id": "abc",
+            "name": "tank test",
+            "display_name": "tank test",
+            "pod_name": "session-abc",
+            "mode": "codex_gui",
+            "status": "Running",
+            "url": "https://tank.romaine.life/?session=abc",
+        },
+        {
+            "id": "05e41f7bfe",
+            "name": None,
+            "display_name": "05e41f7b",
+            "pod_name": "session-05e41f7bfe",
+            "mode": "codex_gui",
+            "status": "Running",
+            "url": "https://tank.romaine.life/?session=05e41f7bfe",
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
 # resolve_session
 # ---------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
 ## Tools
 
 - `list_sessions()` — sessions owned by the calling user.
+- `list_session_refs()` — low-noise list of session ids and Tank UI display names.
 - `resolve_session(session_ref)` — resolve a Tank UI display name or session id to the full session record.
 - `create_session(mode)` — spawn a new session pod.
 - `delete_session(session_id)` — delete one of the caller's sessions.
