@@ -4,7 +4,7 @@ Tools are thin wrappers: they read the CALLER_POD_IP ContextVar, call
 TankClient methods, and return results. Tests verify:
   - _pod_ip() raises the right error when ContextVar is unset.
   - Each tool delegates to the correct TankClient method.
-  - get_session_url walks the list and raises on missing session.
+  - resolve_session/get_session_url walk the list and raise on missing session.
 """
 from __future__ import annotations
 
@@ -97,6 +97,59 @@ def test_create_session_delegates_to_client(mcp_client_pair) -> None:
 
 
 # ---------------------------------------------------------------------------
+# resolve_session
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_session_finds_matching_id(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
+        {"id": "xyz", "name": "other", "pod_name": "session-xyz"},
+    ]
+    fn = _get_tool(mcp, "resolve_session")
+    with _set_ip("10.0.0.5"):
+        result = fn(session_ref="abc")
+    client.list_sessions.assert_called_once_with("10.0.0.5")
+    assert result["name"] == "tank test"
+
+
+def test_resolve_session_finds_matching_friendly_name(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
+        {"id": "xyz", "name": "other", "pod_name": "session-xyz"},
+    ]
+    fn = _get_tool(mcp, "resolve_session")
+    with _set_ip("10.0.0.5"):
+        result = fn(session_ref="tank test")
+    assert result["id"] == "abc"
+
+
+def test_resolve_session_finds_default_display_name(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {"id": "05e41f7bfe", "name": None, "pod_name": "session-05e41f7bfe"},
+    ]
+    fn = _get_tool(mcp, "resolve_session")
+    with _set_ip("10.0.0.5"):
+        result = fn(session_ref="05e41f7b")
+    assert result["id"] == "05e41f7bfe"
+
+
+def test_resolve_session_raises_on_ambiguous_name(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {"id": "abc", "name": "tank test"},
+        {"id": "xyz", "name": "tank test"},
+    ]
+    fn = _get_tool(mcp, "resolve_session")
+    with _set_ip("10.0.0.5"):
+        with pytest.raises(ValueError, match="ambiguous"):
+            fn(session_ref="tank test")
+
+
+# ---------------------------------------------------------------------------
 # delete_session
 # ---------------------------------------------------------------------------
 
@@ -160,6 +213,22 @@ def test_get_session_url_finds_matching_session(mcp_client_pair) -> None:
     fn = _get_tool(mcp, "get_session_url")
     with _set_ip("10.0.0.5"):
         result = fn(session_id="abc")
+    assert result["session_id"] == "abc"
+    assert result["url"].endswith("?session=abc")
+
+
+def test_get_session_url_accepts_friendly_name(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {
+            "id": "abc",
+            "name": "tank test",
+            "url": "https://tank.romaine.life/?session=abc",
+        },
+    ]
+    fn = _get_tool(mcp, "get_session_url")
+    with _set_ip("10.0.0.5"):
+        result = fn(session_id="tank test")
     assert result["session_id"] == "abc"
     assert result["url"].endswith("?session=abc")
 

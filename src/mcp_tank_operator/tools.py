@@ -29,6 +29,49 @@ def _pod_ip() -> str:
     return ip
 
 
+def _default_session_name(session: dict[str, Any]) -> str:
+    raw = str(session.get("pod_name") or session.get("id") or "")
+    return raw.removeprefix("session-")[:8]
+
+
+def _session_display_name(session: dict[str, Any]) -> str:
+    name = session.get("name")
+    if isinstance(name, str) and name:
+        return name
+    return _default_session_name(session)
+
+
+def _resolve_session_ref(sessions: list[dict[str, Any]], session_ref: str) -> dict[str, Any]:
+    ref = session_ref.strip()
+    if not ref:
+        raise ValueError("session_ref must not be blank")
+
+    for session in sessions:
+        if session.get("id") == ref:
+            return session
+
+    exact = [session for session in sessions if _session_display_name(session) == ref]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        choices = ", ".join(str(session.get("id")) for session in exact)
+        raise ValueError(f"session name {ref!r} is ambiguous; matching ids: {choices}")
+
+    folded = ref.casefold()
+    insensitive = [
+        session
+        for session in sessions
+        if _session_display_name(session).casefold() == folded
+    ]
+    if len(insensitive) == 1:
+        return insensitive[0]
+    if len(insensitive) > 1:
+        choices = ", ".join(str(session.get("id")) for session in insensitive)
+        raise ValueError(f"session name {ref!r} is ambiguous; matching ids: {choices}")
+
+    raise ValueError(f"session {session_ref!r} not found or not owned by caller")
+
+
 def register_tools(mcp: FastMCP, client: TankClient) -> None:
     @mcp.tool()
     def list_sessions() -> list[dict[str, Any]]:
@@ -40,6 +83,19 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         session you spawned has started.
         """
         return client.list_sessions(_pod_ip())
+
+    @mcp.tool()
+    def resolve_session(session_ref: str) -> dict[str, Any]:
+        """Resolve a tank UI session name or session id to its session record.
+
+        Use this when the user gives the friendly name shown in the Tank UI
+        (for example "tank test") and you need the underlying session id or
+        pod name. `session_ref` may be either the real session id or the UI
+        display name. Matching is exact first, then case-insensitive. If more
+        than one caller-owned session has the same display name, the tool raises
+        an ambiguity error listing the matching ids.
+        """
+        return _resolve_session_ref(client.list_sessions(_pod_ip()), session_ref)
 
     @mcp.tool()
     def create_session(mode: str = "subscription") -> dict[str, Any]:
@@ -99,14 +155,12 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
     def get_session_url(session_id: str) -> dict[str, str]:
         """Return the tank UI URL for a session.
 
-        Opens the session in the tank web interface. The session must be owned
-        by the calling user.
+        Opens the session in the tank web interface. `session_id` may be either
+        the real session id or the friendly name shown in the Tank UI. The
+        session must be owned by the calling user.
         """
-        sessions = client.list_sessions(_pod_ip())
-        for s in sessions:
-            if s.get("id") == session_id:
-                return {"session_id": session_id, "url": s.get("url", "")}
-        raise ValueError(f"session {session_id} not found or not owned by caller")
+        session = _resolve_session_ref(client.list_sessions(_pod_ip()), session_id)
+        return {"session_id": str(session.get("id", "")), "url": session.get("url", "")}
 
     @mcp.tool()
     def send_prompt(

@@ -13,10 +13,11 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
 ## Tools
 
 - `list_sessions()` — sessions owned by the calling user.
+- `resolve_session(session_ref)` — resolve a Tank UI display name or session id to the full session record.
 - `create_session(mode)` — spawn a new session pod.
 - `delete_session(session_id)` — delete one of the caller's sessions.
 - `set_session_name(session_id, name)` — set or clear the friendly display name.
-- `get_session_url(session_id)` — tank UI URL for an existing session.
+- `get_session_url(session_id)` — tank UI URL for an existing session; accepts either an id or display name.
 - `send_prompt(session_id, prompt, ...)` — fire-and-forget follow-up prompt to a `*_headless` session.
 - `spawn_run_session(prompt, mode, ...)` — combined create-and-dispatch for a fresh headless session.
 
