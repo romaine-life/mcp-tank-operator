@@ -79,7 +79,6 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         session_id: str,
         slot_index: int | None = None,
         url: str | None = None,
-        lease_id: str | None = None,
         active: bool = True,
     ) -> dict[str, Any]:
         """Update Tank's GUI test pill for a caller-owned session.
@@ -94,7 +93,6 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             active=active,
             slot_index=slot_index,
             url=url,
-            lease_id=lease_id,
         )
 
     @mcp.tool()

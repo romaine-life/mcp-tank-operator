@@ -135,7 +135,6 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
             session_id="abc",
             slot_index=2,
             url="https://tank-slot-2.tank.dev.romaine.life",
-            lease_id="lease-123",
         )
     client.set_test_environment.assert_called_once_with(
         "10.0.0.5",
@@ -143,7 +142,6 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
         active=True,
         slot_index=2,
         url="https://tank-slot-2.tank.dev.romaine.life",
-        lease_id="lease-123",
     )
     assert result["test_state"]["slot_index"] == 2
 
