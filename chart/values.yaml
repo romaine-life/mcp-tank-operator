@@ -38,5 +38,6 @@ proxyResources:
     memory: 64Mi
 
 # In-cluster URL to the tank-operator orchestrator. The MCP server passes its
-# SA token here to authenticate to /api/internal/sessions/*.
+# projected tank-operator audience SA token here to authenticate to
+# /api/internal/sessions/*.
 orchestratorUrl: http://tank-operator.tank-operator.svc:80

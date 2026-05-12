@@ -31,6 +31,13 @@ spec:
             # In-cluster orchestrator URL for /api/internal/sessions/* calls.
             - name: ORCHESTRATOR_INTERNAL_URL
               value: "{{ .Values.orchestratorUrl }}"
+            # Dedicated audience token accepted by tank-operator's TokenReview.
+            - name: SA_TOKEN_PATH
+              value: /var/run/secrets/tank-operator/token
+          volumeMounts:
+            - name: tank-operator-token
+              mountPath: /var/run/secrets/tank-operator
+              readOnly: true
           readinessProbe:
             # Server binds 127.0.0.1 (loopback only) — exec probe runs
             # inside the container's netns so localhost resolves.
@@ -61,3 +68,10 @@ spec:
         - name: proxy-config
           configMap:
             name: kube-rbac-proxy
+        - name: tank-operator-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: tank-operator
+                  expirationSeconds: 3600
