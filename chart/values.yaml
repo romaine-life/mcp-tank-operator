@@ -37,7 +37,7 @@ proxyResources:
   limits:
     memory: 64Mi
 
-# In-cluster URL to the tank-operator orchestrator. The MCP server uses its
-# standard mounted service account token to authenticate to
-# /api/internal/sessions/*.
+# In-cluster URL to the tank-operator orchestrator. The MCP server uses a
+# dedicated projected service account token minted for the tank-operator
+# audience to authenticate to /api/internal/sessions/*.
 orchestratorUrl: http://tank-operator.tank-operator.svc:80

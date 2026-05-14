@@ -1,8 +1,9 @@
 """HTTP client wrapper for the tank-operator internal sessions API.
 
-Auth: every call presents this pod's mounted SA token in Authorization.
-The orchestrator validates it via TokenReview and checks the SA subject
-(mcp-tank-operator/mcp-tank-operator) against INTERNAL_API_ALLOWED_SUBJECTS.
+Auth: every call presents this pod's projected SA token minted for the
+``tank-operator`` audience. The orchestrator validates it via TokenReview and
+checks the SA subject (mcp-tank-operator/mcp-tank-operator) against
+INTERNAL_API_ALLOWED_SUBJECTS.
 
 Caller identity: every call includes ?caller_pod_ip=<ip>. The orchestrator
 resolves that IP to the session pod's owner email via find_pod_by_ip +
@@ -26,10 +27,10 @@ ORCHESTRATOR_URL = os.environ.get(
     "ORCHESTRATOR_INTERNAL_URL",
     "http://tank-operator.tank-operator.svc:80",
 )
-SA_TOKEN_PATH = os.environ.get(
-    "SA_TOKEN_PATH",
-    "/var/run/secrets/kubernetes.io/serviceaccount/token",
-)
+# Audience-scoped token path. The chart projects a token minted with
+# audience "tank-operator" so the orchestrator rejects default Kubernetes API
+# audience tokens for /api/internal/*.
+SA_TOKEN_PATH = os.environ.get("TANK_OPERATOR_SA_TOKEN_PATH", "")
 
 _ERROR_BODY_CAP = 1200
 _SPAWN_READY_TIMEOUT_SECONDS = 120.0
