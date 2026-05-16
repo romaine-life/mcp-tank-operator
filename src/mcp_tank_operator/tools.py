@@ -13,12 +13,20 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from .caller import current_caller_pod_ip
+from .caller import current_caller_pod_ip, current_service_bearer
 from .client import TankClient
 
 _CALLER_MISSING_MSG = (
     "could not identify caller from pod IP — make sure you're calling from "
     "inside a tank-operator session pod"
+)
+
+_SERVICE_BEARER_MISSING_MSG = (
+    "service-principal authentication required — this tool needs the calling "
+    "session pod's mcp-auth-proxy sidecar to forward an auth.romaine.life "
+    "service JWT in the X-Auth-Romaine-Token header. Older sidecars without "
+    "this support cannot use spawn_service_session yet. See "
+    "https://github.com/nelsong6/tank-operator/issues/486."
 )
 
 
@@ -27,6 +35,13 @@ def _pod_ip() -> str:
     if not ip:
         raise ValueError(_CALLER_MISSING_MSG)
     return ip
+
+
+def _service_bearer() -> str:
+    jwt = current_service_bearer()
+    if not jwt:
+        raise ValueError(_SERVICE_BEARER_MISSING_MSG)
+    return jwt
 
 
 def _default_session_name(session: dict[str, Any]) -> str:
@@ -208,6 +223,41 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             _pod_ip(),
             session_id=session_id,
             prompt=prompt,
+            model=model,
+            permission_mode=permission_mode,
+        )
+
+    @mcp.tool()
+    def spawn_service_session(
+        prompt: str,
+        mode: str = "claude_gui",
+        name: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Spawn a new session using auth.romaine.life service-principal auth.
+
+        Identical externally to spawn_run_session, but authenticates
+        through the auth.romaine.life service JWT presented in the
+        X-Auth-Romaine-Token header (forwarded by the calling session
+        pod's mcp-auth-proxy sidecar). The new session is owned by the
+        JWT's `actor_email` claim — the human owner of the calling pod —
+        so a pod cannot spawn sessions for any other actor.
+
+        Requires the calling session pod to be running an mcp-auth-proxy
+        sidecar that exchanges its projected
+        `/var/run/secrets/auth.romaine.life/token` for an auth.romaine
+        service JWT and forwards it on this header. Older sidecars
+        without that support get a clear error here — use
+        spawn_run_session in the meantime.
+
+        See nelsong6/tank-operator#486 for the full rollout plan.
+        """
+        return client.spawn_session_as_service(
+            _service_bearer(),
+            prompt=prompt,
+            mode=mode,
+            name=name,
             model=model,
             permission_mode=permission_mode,
         )
