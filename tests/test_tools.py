@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-from mcp_tank_operator.caller import CALLER_POD_IP  # noqa: E402
+from mcp_tank_operator.caller import (  # noqa: E402
+    CALLER_POD_IP,
+    SERVICE_BEARER,
+)
 from mcp_tank_operator.tools import register_tools  # noqa: E402
 
 
@@ -343,3 +346,70 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
         permission_mode=None,
     )
     assert result["status"] == "queued"
+
+
+# ---------------------------------------------------------------------------
+# spawn_service_session — auth.romaine.life service-principal path (#486)
+# ---------------------------------------------------------------------------
+
+
+def _set_service_bearer(jwt: str | None):
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        token = SERVICE_BEARER.set(jwt)
+        try:
+            yield
+        finally:
+            SERVICE_BEARER.reset(token)
+
+    return _ctx()
+
+
+def test_spawn_service_session_forwards_jwt_to_client(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.spawn_session_as_service.return_value = {
+        "session": {"id": "new"},
+        "status": "queued",
+    }
+    fn = _get_tool(mcp, "spawn_service_session")
+    with _set_service_bearer("eyJ.fake.jwt"):
+        with _set_ip("10.0.0.5"):
+            result = fn(prompt="investigate", name="child-1")
+    client.spawn_session_as_service.assert_called_once_with(
+        "eyJ.fake.jwt",
+        prompt="investigate",
+        mode="claude_gui",
+        name="child-1",
+        model=None,
+        permission_mode=None,
+    )
+    assert result["status"] == "queued"
+
+
+def test_spawn_service_session_raises_without_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "spawn_service_session")
+    with _set_service_bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn(prompt="anything")
+
+
+def test_spawn_service_session_does_not_require_pod_ip_when_bearer_present(
+    mcp_client_pair,
+) -> None:
+    # The tool's gate is the service bearer; the pod IP is only used by
+    # the client's follow-up ready-wait + message queue path. The tool
+    # itself accepts a bearer-only caller.
+    mcp, client = mcp_client_pair
+    client.spawn_session_as_service.return_value = {
+        "session": {"id": "new"},
+        "status": "created",
+    }
+    fn = _get_tool(mcp, "spawn_service_session")
+    with _set_service_bearer("eyJ.fake.jwt"):
+        with _set_ip(None):
+            result = fn(prompt="hi")
+    assert result["status"] == "created"
+    client.spawn_session_as_service.assert_called_once()

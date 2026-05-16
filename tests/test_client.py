@@ -275,3 +275,44 @@ def test_sa_token_read_error_raises_runtime_error() -> None:
     bad_client = TankClient(orchestrator_url="http://orch", sa_token_path="/nonexistent/token")
     with pytest.raises(RuntimeError, match="could not read SA token"):
         bad_client.list_sessions("10.0.0.1")
+
+
+# ---------------------------------------------------------------------------
+# spawn_session_as_service — service-principal endpoint, JWT-bearer auth
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_session_as_service_uses_jwt_bearer_no_sa_token(client: TankClient) -> None:
+    # The new endpoint authenticates via the auth.romaine.life service JWT
+    # alone — no SA token, no caller_pod_ip query param. See
+    # nelsong6/tank-operator#486.
+    session = {"id": "child-1", "mode": "claude_gui", "status": "Pending"}
+    with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
+        # No pod IP in ContextVar → falls through to "created" without
+        # waiting on the ready+message path.
+        result = client.spawn_session_as_service(
+            "eyJ.fake.jwt", prompt="hi", mode="claude_gui", name="child-1",
+        )
+
+    mock_post.assert_called_once()
+    call = mock_post.call_args
+    assert "/api/internal/sessions/spawn" in call.args[0]
+    assert call.kwargs["headers"] == {"Authorization": "Bearer eyJ.fake.jwt"}
+    assert "params" not in call.kwargs  # no caller_pod_ip query
+    assert call.kwargs["json"] == {"mode": "claude_gui", "name": "child-1"}
+    assert result == {"status": "created", "session": session, "message": None}
+
+
+def test_spawn_session_as_service_omits_name_when_unset(client: TankClient) -> None:
+    session = {"id": "x"}
+    with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
+        client.spawn_session_as_service("jwt", prompt="hi")
+    assert mock_post.call_args.kwargs["json"] == {"mode": "claude_gui"}
+
+
+def test_spawn_session_as_service_raises_when_spawn_returns_no_id(
+    client: TankClient,
+) -> None:
+    with patch("httpx.post", return_value=_ok_response({"mode": "x"}, status=201)):
+        with pytest.raises(RuntimeError, match="spawn returned no id"):
+            client.spawn_session_as_service("jwt", prompt="hi")

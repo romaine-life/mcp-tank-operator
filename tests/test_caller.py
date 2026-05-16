@@ -16,7 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp_tank_operator.caller import (  # noqa: E402
     CALLER_POD_IP,
+    SERVICE_BEARER,
+    SERVICE_BEARER_HEADER,
     current_caller_pod_ip,
+    current_service_bearer,
     extract_source_pod_ip,
 )
 
@@ -67,3 +70,30 @@ def test_current_caller_pod_ip_round_trips() -> None:
         assert current_caller_pod_ip() == "10.0.0.42"
     finally:
         CALLER_POD_IP.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Service-principal JWT ContextVar (#486)
+# ---------------------------------------------------------------------------
+
+
+def test_service_bearer_header_constant_matches_documented_name() -> None:
+    # mcp-auth-proxy forwards on this exact header. Changing it requires
+    # a cross-repo coordinated deploy.
+    assert SERVICE_BEARER_HEADER == "x-auth-romaine-token"
+
+
+def test_current_service_bearer_default_is_none() -> None:
+    token = SERVICE_BEARER.set(None)
+    try:
+        assert current_service_bearer() is None
+    finally:
+        SERVICE_BEARER.reset(token)
+
+
+def test_current_service_bearer_round_trips() -> None:
+    token = SERVICE_BEARER.set("eyJ.fake.jwt")
+    try:
+        assert current_service_bearer() == "eyJ.fake.jwt"
+    finally:
+        SERVICE_BEARER.reset(token)

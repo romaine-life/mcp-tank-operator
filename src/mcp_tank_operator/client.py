@@ -191,6 +191,73 @@ class TankClient:
         )
         return {"status": "queued", "session": session, "message": message}
 
+    def spawn_session_as_service(
+        self,
+        service_jwt: str,
+        prompt: str,
+        mode: str = "claude_gui",
+        name: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new session via the service-principal endpoint.
+
+        Authenticates with the caller's auth.romaine.life service JWT
+        (forwarded by the session pod's mcp-auth-proxy sidecar in the
+        X-Auth-Romaine-Token header — see caller.SERVICE_BEARER). The
+        orchestrator reads the JWT's actor_email claim and owns the new
+        session under that human; the JWT subject does not need to be
+        passed explicitly.
+
+        The session is created via POST /api/internal/sessions/spawn,
+        which the orchestrator gates to role=service tokens only
+        (see nelsong6/tank-operator#486). No SA token is required for
+        this call — the JWT alone authenticates.
+
+        After creation the call waits for the pod to be ready and queues
+        the first prompt via the legacy IP-tail message endpoint, mirroring
+        spawn_run. Stage 4 retires that fallback once the messages
+        endpoint accepts service-principal auth as well.
+        """
+        body: dict[str, Any] = {"mode": mode}
+        if name:
+            body["name"] = name
+        r = httpx.post(
+            f"{self._url}/api/internal/sessions/spawn",
+            json=body,
+            headers={"Authorization": f"Bearer {service_jwt}"},
+            timeout=15.0,
+        )
+        _check(r)
+        session = r.json()
+        session_id = str(session.get("id") or "")
+        if not session_id:
+            raise RuntimeError(
+                f"spawn returned no id: {session!r}"
+            )
+
+        # Ready-wait + first-prompt path reuses the existing IP-tail
+        # surface; pod IP is still required to drive list_sessions +
+        # send_message until Stage 4 of #486 ports those handlers to
+        # service-principal auth. If the caller has no pod IP, return the
+        # session immediately and let the caller schedule its own
+        # follow-up via send_prompt.
+        from .caller import current_caller_pod_ip
+
+        pod_ip = current_caller_pod_ip()
+        if pod_ip is None:
+            return {"status": "created", "session": session, "message": None}
+
+        session = self._wait_for_session_ready(pod_ip, session_id)
+        message = self.send_message(
+            pod_ip,
+            session_id=session_id,
+            prompt=prompt,
+            model=model,
+            permission_mode=permission_mode,
+        )
+        return {"status": "queued", "session": session, "message": message}
+
     def _wait_for_session_ready(
         self,
         caller_pod_ip: str,

@@ -19,11 +19,37 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-CALLER_POD_IP: ContextVar[str | None] = ContextVar("mcp_tank_operator_caller_pod_ip", default=None)
+CALLER_POD_IP: ContextVar[str | None] = ContextVar(
+    "mcp_tank_operator_caller_pod_ip", default=None,
+)
+
+# Inbound auth.romaine.life service-principal JWT, forwarded by the calling
+# session pod's mcp-auth-proxy sidecar in the X-Auth-Romaine-Token header.
+# When present, tools that target the service-principal session-creation
+# surface (POST /api/internal/sessions/spawn) forward it as the Bearer on
+# the outbound call. The header name avoids the standard Authorization
+# header because kube-rbac-proxy in front of this process consumes that
+# one for its own SA-TokenReview gate.
+#
+# See nelsong6/tank-operator#486.
+SERVICE_BEARER: ContextVar[str | None] = ContextVar(
+    "mcp_tank_operator_service_bearer", default=None,
+)
+
+SERVICE_BEARER_HEADER = "x-auth-romaine-token"
 
 
 def current_caller_pod_ip() -> str | None:
     return CALLER_POD_IP.get()
+
+
+def current_service_bearer() -> str | None:
+    """Return the inbound service-principal JWT, if the calling session
+    pod's mcp-auth-proxy sidecar forwarded one. None if the caller is
+    using the legacy IP-tail identity path (older sidecar, or a test
+    harness that doesn't set the header).
+    """
+    return SERVICE_BEARER.get()
 
 
 def extract_source_pod_ip(forwarded_for: str | None, peer_ip: str | None) -> str | None:

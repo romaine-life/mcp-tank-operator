@@ -29,25 +29,52 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
 
-from .caller import CALLER_POD_IP, extract_source_pod_ip
+from .caller import (
+    CALLER_POD_IP,
+    SERVICE_BEARER,
+    SERVICE_BEARER_HEADER,
+    extract_source_pod_ip,
+)
 from .client import TankClient
 from .tools import register_tools
 
 log = logging.getLogger(__name__)
 
 
-class CallerPodIPMiddleware(BaseHTTPMiddleware):
-    """Extract caller pod IP from X-Forwarded-For and bind to ContextVar."""
+class CallerIdentityMiddleware(BaseHTTPMiddleware):
+    """Bind per-request caller identity into ContextVars.
+
+    Two identity inputs, both optional:
+      - X-Forwarded-For pod IP (legacy IP-tail identity, still used by
+        every existing tool).
+      - X-Auth-Romaine-Token header carrying an auth.romaine.life
+        service-principal JWT (new in #486). Forwarded to
+        /api/internal/sessions/spawn as the Bearer on outbound calls.
+
+    Both stay None when absent — tools surface domain-specific errors
+    rather than failing the middleware.
+    """
 
     async def dispatch(self, request: Request, call_next):
         forwarded_for = request.headers.get("x-forwarded-for")
         peer_ip = request.client.host if request.client else None
         pod_ip = extract_source_pod_ip(forwarded_for, peer_ip)
-        token = CALLER_POD_IP.set(pod_ip)
+        service_bearer = request.headers.get(SERVICE_BEARER_HEADER)
+        if service_bearer is not None:
+            service_bearer = service_bearer.strip() or None
+
+        pod_ip_token = CALLER_POD_IP.set(pod_ip)
+        bearer_token = SERVICE_BEARER.set(service_bearer)
         try:
             return await call_next(request)
         finally:
-            CALLER_POD_IP.reset(token)
+            CALLER_POD_IP.reset(pod_ip_token)
+            SERVICE_BEARER.reset(bearer_token)
+
+
+# Backwards-compatible alias for any external imports that referenced
+# the pre-#486 middleware name. Remove with Stage 4 cleanup.
+CallerPodIPMiddleware = CallerIdentityMiddleware
 
 
 def build_app() -> Starlette:
@@ -83,7 +110,7 @@ def build_app() -> Starlette:
             Mount("/", app=mcp.streamable_http_app()),
         ],
         middleware=[
-            Middleware(CallerPodIPMiddleware),
+            Middleware(CallerIdentityMiddleware),
         ],
         lifespan=lifespan,
     )
