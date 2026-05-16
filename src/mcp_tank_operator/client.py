@@ -158,12 +158,12 @@ class TankClient:
         body: dict[str, Any] = {"mode": mode}
         if name:
             body["name"] = name
-        # Use /spawn for new-session creation — semantically clearer than
-        # the bare POST /api/internal/sessions and lets the orchestrator
-        # accept an inline `name` field. Both endpoints have identical
-        # auth + behavior post-#486.
+        # POST /api/internal/sessions — the canonical service-principal
+        # session-create endpoint. Accepts inline `name` post-#486. The
+        # legacy `/spawn` alias was retired in the API cleanup PR that
+        # ships alongside this change.
         r = httpx.post(
-            f"{self._url}/api/internal/sessions/spawn",
+            f"{self._url}/api/internal/sessions",
             json=body,
             headers=self._headers(service_jwt),
             timeout=15.0,

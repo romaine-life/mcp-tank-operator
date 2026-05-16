@@ -183,9 +183,11 @@ def test_spawn_run_uses_spawn_endpoint(client: TankClient) -> None:
     ):
         result = client.spawn_run("jwt", prompt="hi", mode="claude_gui", name="child-1")
 
-    # First POST is /spawn with the inline name.
+    # First POST is the canonical /api/internal/sessions create endpoint
+    # with the inline name. (The legacy /spawn alias was retired in the
+    # API cleanup that followed the #486 cutover.)
     spawn_call = mock_post.call_args_list[0]
-    assert "/api/internal/sessions/spawn" in spawn_call.args[0]
+    assert spawn_call.args[0].endswith("/api/internal/sessions")
     assert spawn_call.kwargs["json"] == {"mode": "claude_gui", "name": "child-1"}
     assert spawn_call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 
