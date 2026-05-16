@@ -1,22 +1,19 @@
 """HTTP client wrapper for the tank-operator internal sessions API.
 
-Auth: every call presents this pod's projected SA token minted for the
-``tank-operator`` audience. The orchestrator validates it via TokenReview and
-checks the SA subject (mcp-tank-operator/mcp-tank-operator) against
-INTERNAL_API_ALLOWED_SUBJECTS.
+Auth: every call presents the calling pod's auth.romaine.life
+service-principal JWT (forwarded by mcp-auth-proxy in
+X-Auth-Romaine-Token; this server reads it into caller.SERVICE_BEARER
+and threads it through). The orchestrator verifies the JWT, gates on
+``role=service``, and treats the JWT's ``actor_email`` claim as the
+owner identity. No SA token, no caller_pod_ip query param.
 
-Caller identity: every call includes ?caller_pod_ip=<ip>. The orchestrator
-resolves that IP to the session pod's owner email via find_pod_by_ip +
-tank-operator/owner-email annotation and acts on behalf of that email. This
-keeps identity locked to the network-layer source-IP chain and prevents any
-caller from claiming an arbitrary email.
+See nelsong6/tank-operator#486 for the cross-repo plan.
 """
 from __future__ import annotations
 
 import logging
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -27,10 +24,6 @@ ORCHESTRATOR_URL = os.environ.get(
     "ORCHESTRATOR_INTERNAL_URL",
     "http://tank-operator.tank-operator.svc:80",
 )
-# Audience-scoped token path. The chart projects a token minted with
-# audience "tank-operator" so the orchestrator rejects default Kubernetes API
-# audience tokens for /api/internal/*.
-SA_TOKEN_PATH = os.environ.get("TANK_OPERATOR_SA_TOKEN_PATH", "")
 
 _ERROR_BODY_CAP = 1200
 _SPAWN_READY_TIMEOUT_SECONDS = 120.0
@@ -53,66 +46,56 @@ def _check(r: httpx.Response) -> None:
 
 
 class TankClient:
-    """Wraps /api/internal/sessions/* calls with SA-token auth + caller IP."""
+    """Wraps /api/internal/sessions/* calls with service-principal JWT auth.
 
-    def __init__(
-        self,
-        orchestrator_url: str = ORCHESTRATOR_URL,
-        sa_token_path: str = SA_TOKEN_PATH,
-    ) -> None:
+    Every method takes the calling pod's service JWT and forwards it as
+    the Authorization Bearer. The orchestrator resolves ``actor_email``
+    from the JWT and acts on behalf of that human.
+    """
+
+    def __init__(self, orchestrator_url: str = ORCHESTRATOR_URL) -> None:
         self._url = orchestrator_url.rstrip("/")
-        self._sa_token_path = Path(sa_token_path)
 
-    def _sa_token(self) -> str:
-        try:
-            return self._sa_token_path.read_text().strip()
-        except OSError as exc:
-            raise RuntimeError(
-                f"could not read SA token at {self._sa_token_path}: {exc}"
-            ) from exc
+    def _headers(self, service_jwt: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {service_jwt}"}
 
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._sa_token()}"}
-
-    def list_sessions(self, caller_pod_ip: str) -> list[dict[str, Any]]:
+    def list_sessions(self, service_jwt: str) -> list[dict[str, Any]]:
         r = httpx.get(
             f"{self._url}/api/internal/sessions",
-            params={"caller_pod_ip": caller_pod_ip},
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
         return r.json()
 
-    def create_session(self, caller_pod_ip: str, mode: str) -> dict[str, Any]:
+    def create_session(self, service_jwt: str, mode: str) -> dict[str, Any]:
         r = httpx.post(
             f"{self._url}/api/internal/sessions",
-            params={"caller_pod_ip": caller_pod_ip},
             json={"mode": mode},
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
         return r.json()
 
-    def delete_session(self, caller_pod_ip: str, session_id: str) -> dict[str, Any]:
+    def delete_session(
+        self, service_jwt: str, session_id: str,
+    ) -> dict[str, Any]:
         r = httpx.delete(
             f"{self._url}/api/internal/sessions/{session_id}",
-            params={"caller_pod_ip": caller_pod_ip},
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
         return r.json()
 
     def set_session_name(
-        self, caller_pod_ip: str, session_id: str, name: str | None
+        self, service_jwt: str, session_id: str, name: str | None,
     ) -> dict[str, Any]:
         r = httpx.patch(
             f"{self._url}/api/internal/sessions/{session_id}",
-            params={"caller_pod_ip": caller_pod_ip},
             json={"name": name},
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
@@ -120,7 +103,7 @@ class TankClient:
 
     def set_test_environment(
         self,
-        caller_pod_ip: str,
+        service_jwt: str,
         session_id: str,
         active: bool = True,
         slot_index: int | None = None,
@@ -133,9 +116,8 @@ class TankClient:
             body["url"] = url
         r = httpx.post(
             f"{self._url}/api/internal/sessions/{session_id}/test-state",
-            params={"caller_pod_ip": caller_pod_ip},
             json=body,
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
@@ -143,7 +125,7 @@ class TankClient:
 
     def send_message(
         self,
-        caller_pod_ip: str,
+        service_jwt: str,
         session_id: str,
         prompt: str,
         model: str | None = None,
@@ -156,42 +138,14 @@ class TankClient:
             body["permission_mode"] = permission_mode
         r = httpx.post(
             f"{self._url}/api/internal/sessions/{session_id}/messages",
-            params={"caller_pod_ip": caller_pod_ip},
             json=body,
-            headers=self._headers(),
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
         return r.json()
 
     def spawn_run(
-        self,
-        caller_pod_ip: str,
-        prompt: str,
-        mode: str = "claude_gui",
-        name: str | None = None,
-        model: str | None = None,
-        permission_mode: str | None = None,
-    ) -> dict[str, Any]:
-        session = self.create_session(caller_pod_ip, mode=mode)
-        session_id = str(session.get("id") or "")
-        if not session_id:
-            raise RuntimeError(f"create_session returned no id: {session!r}")
-
-        if name:
-            session = self.set_session_name(caller_pod_ip, session_id=session_id, name=name)
-
-        session = self._wait_for_session_ready(caller_pod_ip, session_id)
-        message = self.send_message(
-            caller_pod_ip,
-            session_id=session_id,
-            prompt=prompt,
-            model=model,
-            permission_mode=permission_mode,
-        )
-        return {"status": "queued", "session": session, "message": message}
-
-    def spawn_session_as_service(
         self,
         service_jwt: str,
         prompt: str,
@@ -200,57 +154,28 @@ class TankClient:
         model: str | None = None,
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new session via the service-principal endpoint.
-
-        Authenticates with the caller's auth.romaine.life service JWT
-        (forwarded by the session pod's mcp-auth-proxy sidecar in the
-        X-Auth-Romaine-Token header — see caller.SERVICE_BEARER). The
-        orchestrator reads the JWT's actor_email claim and owns the new
-        session under that human; the JWT subject does not need to be
-        passed explicitly.
-
-        The session is created via POST /api/internal/sessions/spawn,
-        which the orchestrator gates to role=service tokens only
-        (see nelsong6/tank-operator#486). No SA token is required for
-        this call — the JWT alone authenticates.
-
-        After creation the call waits for the pod to be ready and queues
-        the first prompt via the legacy IP-tail message endpoint, mirroring
-        spawn_run. Stage 4 retires that fallback once the messages
-        endpoint accepts service-principal auth as well.
-        """
+        """Create a session, wait for ready, then queue the first prompt."""
         body: dict[str, Any] = {"mode": mode}
         if name:
             body["name"] = name
+        # Use /spawn for new-session creation — semantically clearer than
+        # the bare POST /api/internal/sessions and lets the orchestrator
+        # accept an inline `name` field. Both endpoints have identical
+        # auth + behavior post-#486.
         r = httpx.post(
             f"{self._url}/api/internal/sessions/spawn",
             json=body,
-            headers={"Authorization": f"Bearer {service_jwt}"},
+            headers=self._headers(service_jwt),
             timeout=15.0,
         )
         _check(r)
         session = r.json()
         session_id = str(session.get("id") or "")
         if not session_id:
-            raise RuntimeError(
-                f"spawn returned no id: {session!r}"
-            )
-
-        # Ready-wait + first-prompt path reuses the existing IP-tail
-        # surface; pod IP is still required to drive list_sessions +
-        # send_message until Stage 4 of #486 ports those handlers to
-        # service-principal auth. If the caller has no pod IP, return the
-        # session immediately and let the caller schedule its own
-        # follow-up via send_prompt.
-        from .caller import current_caller_pod_ip
-
-        pod_ip = current_caller_pod_ip()
-        if pod_ip is None:
-            return {"status": "created", "session": session, "message": None}
-
-        session = self._wait_for_session_ready(pod_ip, session_id)
+            raise RuntimeError(f"spawn returned no id: {session!r}")
+        session = self._wait_for_session_ready(service_jwt, session_id)
         message = self.send_message(
-            pod_ip,
+            service_jwt,
             session_id=session_id,
             prompt=prompt,
             model=model,
@@ -260,14 +185,14 @@ class TankClient:
 
     def _wait_for_session_ready(
         self,
-        caller_pod_ip: str,
+        service_jwt: str,
         session_id: str,
         timeout_seconds: float = _SPAWN_READY_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
         last_session: dict[str, Any] | None = None
         while time.monotonic() < deadline:
-            for session in self.list_sessions(caller_pod_ip):
+            for session in self.list_sessions(service_jwt):
                 if str(session.get("id")) != session_id:
                     continue
                 last_session = session

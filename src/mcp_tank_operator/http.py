@@ -1,19 +1,17 @@
 """HTTP entrypoint — streamable-http transport.
 
-Auth is handled by kube-rbac-proxy in front of this process: session pods
-present their projected K8s SA token, the proxy validates it via TokenReview +
-SubjectAccessReview against mcp.tank-operator.io/servers/tank-operator, and
-only authorized requests reach this server. We bind loopback so direct
-pod-IP:8080 access bypasses nothing — only the proxy can reach us.
+Inbound transport gate is kube-rbac-proxy in front of this process: it
+TokenReviews the calling pod's projected SA token + SubjectAccessReview
+against ``mcp.tank-operator.io/servers/tank-operator`` and only
+authorized requests reach this server. We bind loopback so direct
+pod-IP:8080 access bypasses nothing.
 
-Per-caller identity: a Starlette middleware reads the source session pod's IP
-off X-Forwarded-For (kube-rbac-proxy appends it) and stashes it in a
-ContextVar. Each tool call reads that ContextVar and passes it as
-caller_pod_ip to the orchestrator's /api/internal/sessions/* endpoints. The
-orchestrator resolves IP → owner email server-side.
-
-Fail-open: if pod IP is missing (probe, unknown caller) the ContextVar is None
-and tools surface a clean "could not identify caller" error rather than 500.
+Per-caller identity is the auth.romaine.life service-principal JWT
+forwarded by the calling pod's mcp-auth-proxy sidecar in
+``X-Auth-Romaine-Token``. A Starlette middleware extracts it into the
+``SERVICE_BEARER`` ContextVar; tool handlers thread it through to
+TankClient. See nelsong6/tank-operator#486 for the rollout that
+retired the prior IP-tail identity path.
 """
 
 import logging
@@ -29,12 +27,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
 
-from .caller import (
-    CALLER_POD_IP,
-    SERVICE_BEARER,
-    SERVICE_BEARER_HEADER,
-    extract_source_pod_ip,
-)
+from .caller import SERVICE_BEARER, SERVICE_BEARER_HEADER
 from .client import TankClient
 from .tools import register_tools
 
@@ -42,39 +35,19 @@ log = logging.getLogger(__name__)
 
 
 class CallerIdentityMiddleware(BaseHTTPMiddleware):
-    """Bind per-request caller identity into ContextVars.
-
-    Two identity inputs, both optional:
-      - X-Forwarded-For pod IP (legacy IP-tail identity, still used by
-        every existing tool).
-      - X-Auth-Romaine-Token header carrying an auth.romaine.life
-        service-principal JWT (new in #486). Forwarded to
-        /api/internal/sessions/spawn as the Bearer on outbound calls.
-
-    Both stay None when absent — tools surface domain-specific errors
-    rather than failing the middleware.
-    """
+    """Bind the inbound service-principal JWT into the SERVICE_BEARER
+    ContextVar for the duration of the request. Absent header → None,
+    which tool handlers surface as a domain-specific error."""
 
     async def dispatch(self, request: Request, call_next):
-        forwarded_for = request.headers.get("x-forwarded-for")
-        peer_ip = request.client.host if request.client else None
-        pod_ip = extract_source_pod_ip(forwarded_for, peer_ip)
-        service_bearer = request.headers.get(SERVICE_BEARER_HEADER)
-        if service_bearer is not None:
-            service_bearer = service_bearer.strip() or None
-
-        pod_ip_token = CALLER_POD_IP.set(pod_ip)
-        bearer_token = SERVICE_BEARER.set(service_bearer)
+        bearer = request.headers.get(SERVICE_BEARER_HEADER)
+        if bearer is not None:
+            bearer = bearer.strip() or None
+        token = SERVICE_BEARER.set(bearer)
         try:
             return await call_next(request)
         finally:
-            CALLER_POD_IP.reset(pod_ip_token)
-            SERVICE_BEARER.reset(bearer_token)
-
-
-# Backwards-compatible alias for any external imports that referenced
-# the pre-#486 middleware name. Remove with Stage 4 cleanup.
-CallerPodIPMiddleware = CallerIdentityMiddleware
+            SERVICE_BEARER.reset(token)
 
 
 def build_app() -> Starlette:

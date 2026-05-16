@@ -1,40 +1,30 @@
 """MCP tool definitions for mcp-tank-operator.
 
-All tools resolve the caller's identity from the pod IP ContextVar set by the
-HTTP middleware. If the ContextVar is unset (stdio mode, healthz probe, missing
-X-Forwarded-For) tools raise an actionable error rather than silently acting as
-the server's own SA. This satisfies the spec: caller identity is always the
-network-layer source-IP chain, never a caller-supplied email.
+All tools authenticate via the calling pod's auth.romaine.life
+service-principal JWT, extracted from the inbound X-Auth-Romaine-Token
+header into the SERVICE_BEARER ContextVar by the HTTP middleware.
+If absent (stdio mode, healthz probe, older mcp-auth-proxy sidecar
+without the injection support), tools raise a clean error rather than
+silently acting as the server's own SA.
+
+See nelsong6/tank-operator#486 for the rollout that retired the prior
+IP-tail identity path.
 """
 from __future__ import annotations
 
 from typing import Any
 
-import httpx
 from mcp.server.fastmcp import FastMCP
 
-from .caller import current_caller_pod_ip, current_service_bearer
+from .caller import current_service_bearer
 from .client import TankClient
-
-_CALLER_MISSING_MSG = (
-    "could not identify caller from pod IP — make sure you're calling from "
-    "inside a tank-operator session pod"
-)
 
 _SERVICE_BEARER_MISSING_MSG = (
     "service-principal authentication required — this tool needs the calling "
     "session pod's mcp-auth-proxy sidecar to forward an auth.romaine.life "
-    "service JWT in the X-Auth-Romaine-Token header. Older sidecars without "
-    "this support cannot use spawn_service_session yet. See "
+    "service JWT in the X-Auth-Romaine-Token header. See "
     "https://github.com/nelsong6/tank-operator/issues/486."
 )
-
-
-def _pod_ip() -> str:
-    ip = current_caller_pod_ip()
-    if not ip:
-        raise ValueError(_CALLER_MISSING_MSG)
-    return ip
 
 
 def _service_bearer() -> str:
@@ -109,19 +99,19 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         before sending them a prompt with send_prompt, or to check whether a
         session you spawned has started.
         """
-        return client.list_sessions(_pod_ip())
+        return client.list_sessions(_service_bearer())
 
     @mcp.tool()
     def list_session_refs() -> list[dict[str, Any]]:
         """List the session ids and Tank UI names owned by the caller.
 
-        This is the low-noise discovery tool to use when the user refers to a
-        session by the name shown in the Tank sidebar. `display_name` is the
-        effective UI label: the friendly `name` when one is set, otherwise the
-        default short id derived from the pod/session id. Pass either `id` or
-        `display_name` to resolve_session.
+        Low-noise discovery for when the user refers to a session by its
+        Tank-sidebar name. `display_name` is the effective label: the
+        friendly `name` when set, otherwise the default short id derived
+        from the pod/session id. Pass either `id` or `display_name` to
+        resolve_session.
         """
-        return [_session_ref_summary(session) for session in client.list_sessions(_pod_ip())]
+        return [_session_ref_summary(session) for session in client.list_sessions(_service_bearer())]
 
     @mcp.tool()
     def resolve_session(session_ref: str) -> dict[str, Any]:
@@ -129,12 +119,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
 
         Use this when the user gives the friendly name shown in the Tank UI
         (for example "tank test") and you need the underlying session id or
-        pod name. `session_ref` may be either the real session id or the UI
-        display name. Matching is exact first, then case-insensitive. If more
-        than one caller-owned session has the same display name, the tool raises
-        an ambiguity error listing the matching ids.
+        pod name. Matching is exact first, then case-insensitive. If more
+        than one caller-owned session has the same display name, raises an
+        ambiguity error listing the matching ids.
         """
-        return _resolve_session_ref(client.list_sessions(_pod_ip()), session_ref)
+        return _resolve_session_ref(client.list_sessions(_service_bearer()), session_ref)
 
     @mcp.tool()
     def create_session(mode: str = "claude_gui") -> dict[str, Any]:
@@ -148,7 +137,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         after the pod is ready. For a combined create-and-queue flow, use
         spawn_run_session instead.
         """
-        return client.create_session(_pod_ip(), mode=mode)
+        return client.create_session(_service_bearer(), mode=mode)
 
     @mcp.tool()
     def delete_session(session_id: str) -> dict[str, Any]:
@@ -157,7 +146,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         The calling user must own the session — attempting to delete another
         user's session raises 403. Returns {"id": ..., "status": "deleted"}.
         """
-        return client.delete_session(_pod_ip(), session_id=session_id)
+        return client.delete_session(_service_bearer(), session_id=session_id)
 
     @mcp.tool()
     def set_session_name(session_id: str, name: str | None) -> dict[str, Any]:
@@ -167,7 +156,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         Pass None or empty string to clear an existing name. Returns the
         updated session record.
         """
-        return client.set_session_name(_pod_ip(), session_id=session_id, name=name)
+        return client.set_session_name(_service_bearer(), session_id=session_id, name=name)
 
     @mcp.tool()
     def set_test_environment(
@@ -183,7 +172,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         test environment. Pass active=False to clear the state.
         """
         return client.set_test_environment(
-            _pod_ip(),
+            _service_bearer(),
             session_id=session_id,
             active=active,
             slot_index=slot_index,
@@ -198,7 +187,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         the real session id or the friendly name shown in the Tank UI. The
         session must be owned by the calling user.
         """
-        session = _resolve_session_ref(client.list_sessions(_pod_ip()), session_id)
+        session = _resolve_session_ref(client.list_sessions(_service_bearer()), session_id)
         return {"session_id": str(session.get("id", "")), "url": session.get("url", "")}
 
     @mcp.tool()
@@ -220,44 +209,9 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         For a completely fresh session, use spawn_run_session instead.
         """
         return client.send_message(
-            _pod_ip(),
+            _service_bearer(),
             session_id=session_id,
             prompt=prompt,
-            model=model,
-            permission_mode=permission_mode,
-        )
-
-    @mcp.tool()
-    def spawn_service_session(
-        prompt: str,
-        mode: str = "claude_gui",
-        name: str | None = None,
-        model: str | None = None,
-        permission_mode: str | None = None,
-    ) -> dict[str, Any]:
-        """Spawn a new session using auth.romaine.life service-principal auth.
-
-        Identical externally to spawn_run_session, but authenticates
-        through the auth.romaine.life service JWT presented in the
-        X-Auth-Romaine-Token header (forwarded by the calling session
-        pod's mcp-auth-proxy sidecar). The new session is owned by the
-        JWT's `actor_email` claim — the human owner of the calling pod —
-        so a pod cannot spawn sessions for any other actor.
-
-        Requires the calling session pod to be running an mcp-auth-proxy
-        sidecar that exchanges its projected
-        `/var/run/secrets/auth.romaine.life/token` for an auth.romaine
-        service JWT and forwards it on this header. Older sidecars
-        without that support get a clear error here — use
-        spawn_run_session in the meantime.
-
-        See nelsong6/tank-operator#486 for the full rollout plan.
-        """
-        return client.spawn_session_as_service(
-            _service_bearer(),
-            prompt=prompt,
-            mode=mode,
-            name=name,
             model=model,
             permission_mode=permission_mode,
         )
@@ -272,8 +226,9 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
     ) -> dict[str, Any]:
         """Create a fresh SDK chat session and queue the first prompt to it.
 
-        The new pod is owned by the same user as the calling session. Returns
-        the new session record plus the queued turn response.
+        The new pod is owned by the same user as the calling session
+        (resolved server-side from the service JWT's actor_email claim).
+        Returns the new session record plus the queued turn response.
 
         - `prompt`: instructions for the agent (required, non-empty).
         - `mode`: claude_gui (default) or codex_gui.
@@ -281,11 +236,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `model`, `permission_mode`: forwarded to the SDK turn queue
           (validated server-side to [A-Za-z0-9._-]{1,64}).
 
-        This call waits for the new session pod to become ready, then queues
-        the first turn. Open the returned session URL in Tank to watch progress.
+        Waits for the new session pod to become ready, then queues the
+        first turn. Open the returned session URL in Tank to watch progress.
         """
         return client.spawn_run(
-            _pod_ip(),
+            _service_bearer(),
             prompt=prompt,
             mode=mode,
             name=name,

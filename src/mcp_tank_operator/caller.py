@@ -1,67 +1,34 @@
-"""Per-request caller pod IP extraction.
+"""Per-request caller identity extraction.
 
-kube-rbac-proxy fronts our Python upstream on loopback. The proxy is a Go
-reverse proxy that appends the immediate peer IP to X-Forwarded-For before
-forwarding. The *last* entry in that chain is the session pod's IP — the IP
-that reached kube-rbac-proxy from outside the mcp-tank-operator pod. We stash
-that IP in a ContextVar so tool handlers can pass it to the orchestrator's
-/api/internal/sessions/* endpoints without threading a request object through.
+Identity is the auth.romaine.life service-principal JWT forwarded by
+the calling session pod's mcp-auth-proxy sidecar in the
+X-Auth-Romaine-Token header. mcp-auth-proxy exchanges the pod's
+projected ``audience=https://auth.romaine.life`` SA token at
+``auth.romaine.life/api/auth/exchange/k8s`` and forwards the resulting
+``role=service`` JWT; this server extracts it into a ContextVar and
+tool handlers thread it through to TankClient.
 
-Unlike mcp-github, we don't resolve the IP to an email here — the orchestrator
-does that atomically in each internal endpoint (caller_pod_ip → owner email via
-find_pod_by_ip + owner-email annotation). This keeps the MCP server stateless.
-
-Fail-open posture: if pod IP is absent (healthz probes, local testing) the
-ContextVar stays None. Tools surface a clean error: "could not identify caller
-from pod IP — make sure you're calling from inside a tank-operator session pod".
+The pre-#486 IP-tail identity path (X-Forwarded-For → caller_pod_ip
+query param → orchestrator-side FindPodByIP) was retired in Stage 4 —
+the orchestrator no longer accepts that shape on ``/api/internal/
+sessions/*``. See nelsong6/tank-operator#486.
 """
 from __future__ import annotations
 
 from contextvars import ContextVar
 
-CALLER_POD_IP: ContextVar[str | None] = ContextVar(
-    "mcp_tank_operator_caller_pod_ip", default=None,
-)
-
-# Inbound auth.romaine.life service-principal JWT, forwarded by the calling
-# session pod's mcp-auth-proxy sidecar in the X-Auth-Romaine-Token header.
-# When present, tools that target the service-principal session-creation
-# surface (POST /api/internal/sessions/spawn) forward it as the Bearer on
-# the outbound call. The header name avoids the standard Authorization
-# header because kube-rbac-proxy in front of this process consumes that
-# one for its own SA-TokenReview gate.
-#
-# See nelsong6/tank-operator#486.
+# Inbound service-principal JWT. None when absent — tools surface a
+# clean "service-principal authentication required" error rather than
+# silently falling through.
 SERVICE_BEARER: ContextVar[str | None] = ContextVar(
     "mcp_tank_operator_service_bearer", default=None,
 )
 
+# Header name shared with the upstream mcp-auth-proxy sidecar
+# (in tank-operator's claude-container). Changing it requires a
+# cross-repo coordinated deploy.
 SERVICE_BEARER_HEADER = "x-auth-romaine-token"
 
 
-def current_caller_pod_ip() -> str | None:
-    return CALLER_POD_IP.get()
-
-
 def current_service_bearer() -> str | None:
-    """Return the inbound service-principal JWT, if the calling session
-    pod's mcp-auth-proxy sidecar forwarded one. None if the caller is
-    using the legacy IP-tail identity path (older sidecar, or a test
-    harness that doesn't set the header).
-    """
     return SERVICE_BEARER.get()
-
-
-def extract_source_pod_ip(forwarded_for: str | None, peer_ip: str | None) -> str | None:
-    """Pick the session pod's IP off the X-Forwarded-For chain.
-
-    kube-rbac-proxy fronts our Python upstream on loopback; it appends the
-    immediate peer to X-Forwarded-For before forwarding. The *last* hop is
-    the IP that reached the proxy from outside the pod — i.e. the session
-    pod's cluster IP.
-    """
-    if forwarded_for:
-        last = forwarded_for.split(",")[-1].strip()
-        if last:
-            return last
-    return peer_ip

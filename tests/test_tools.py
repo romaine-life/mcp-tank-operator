@@ -1,13 +1,18 @@
 """Unit tests for MCP tool registrations.
 
-Tools are thin wrappers: they read the CALLER_POD_IP ContextVar, call
-TankClient methods, and return results. Tests verify:
-  - _pod_ip() raises the right error when ContextVar is unset.
-  - Each tool delegates to the correct TankClient method.
-  - resolve_session/get_session_url walk the list and raise on missing session.
+Every tool reads the SERVICE_BEARER ContextVar (set by the HTTP
+middleware from X-Auth-Romaine-Token) and forwards the JWT to a
+TankClient method. Tests verify:
+  - _service_bearer() raises the right error when the ContextVar is unset.
+  - Each tool delegates to the correct TankClient method with the JWT.
+  - resolve_session / get_session_url walk the list and raise on missing.
+
+See nelsong6/tank-operator#486 for the rollout that retired the prior
+IP-tail identity path tested here.
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -18,10 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-from mcp_tank_operator.caller import (  # noqa: E402
-    CALLER_POD_IP,
-    SERVICE_BEARER,
-)
+from mcp_tank_operator.caller import SERVICE_BEARER  # noqa: E402
 from mcp_tank_operator.tools import register_tools  # noqa: E402
 
 
@@ -33,19 +35,14 @@ def mcp_client_pair():
     return mcp, client
 
 
-def _set_ip(ip: str | None):
-    """Context manager that sets CALLER_POD_IP for the duration of a call."""
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        token = CALLER_POD_IP.set(ip)
-        try:
-            yield
-        finally:
-            CALLER_POD_IP.reset(token)
-
-    return _ctx()
+@contextlib.contextmanager
+def _bearer(jwt: str | None):
+    """Bind SERVICE_BEARER for the duration of a tool call."""
+    token = SERVICE_BEARER.set(jwt)
+    try:
+        yield
+    finally:
+        SERVICE_BEARER.reset(token)
 
 
 def _get_tool(mcp: FastMCP, name: str):
@@ -57,15 +54,23 @@ def _get_tool(mcp: FastMCP, name: str):
 
 
 # ---------------------------------------------------------------------------
-# _pod_ip guard
+# _service_bearer guard — every tool refuses without the inbound JWT.
 # ---------------------------------------------------------------------------
 
 
-def test_list_sessions_raises_when_no_caller_ip(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
+def test_list_sessions_raises_when_no_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
     fn = _get_tool(mcp, "list_sessions")
-    with _set_ip(None):
-        with pytest.raises(ValueError, match="could not identify caller"):
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn()
+
+
+def test_create_session_raises_when_no_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "create_session")
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
             fn()
 
 
@@ -78,9 +83,9 @@ def test_list_sessions_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [{"id": "abc"}]
     fn = _get_tool(mcp, "list_sessions")
-    with _set_ip("10.0.0.5"):
+    with _bearer("eyJ.fake.jwt"):
         result = fn()
-    client.list_sessions.assert_called_once_with("10.0.0.5")
+    client.list_sessions.assert_called_once_with("eyJ.fake.jwt")
     assert result == [{"id": "abc"}]
 
 
@@ -91,120 +96,67 @@ def test_list_sessions_delegates_to_client(mcp_client_pair) -> None:
 
 def test_create_session_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.create_session.return_value = {"id": "new", "mode": "subscription"}
+    client.create_session.return_value = {"id": "new123"}
     fn = _get_tool(mcp, "create_session")
-    with _set_ip("10.0.0.5"):
-        result = fn(mode="subscription")
-    client.create_session.assert_called_once_with("10.0.0.5", mode="subscription")
-    assert result["id"] == "new"
+    with _bearer("eyJ.fake.jwt"):
+        result = fn(mode="claude_gui")
+    client.create_session.assert_called_once_with("eyJ.fake.jwt", mode="claude_gui")
+    assert result["id"] == "new123"
 
 
 # ---------------------------------------------------------------------------
-# list_session_refs
+# list_session_refs / resolve_session — friendly-name pathway
 # ---------------------------------------------------------------------------
 
 
 def test_list_session_refs_returns_names_and_ids(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {
-            "id": "abc",
-            "name": "tank test",
-            "pod_name": "session-abc",
-            "mode": "codex_gui",
-            "status": "Running",
-            "url": "https://tank.romaine.life/?session=abc",
-        },
-        {
-            "id": "05e41f7bfe",
-            "name": None,
-            "pod_name": "session-05e41f7bfe",
-            "mode": "codex_gui",
-            "status": "Running",
-            "url": "https://tank.romaine.life/?session=05e41f7bfe",
-        },
+        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
+        {"id": "xyz", "pod_name": "session-xyz"},
     ]
     fn = _get_tool(mcp, "list_session_refs")
-    with _set_ip("10.0.0.5"):
+    with _bearer("jwt"):
         result = fn()
-    client.list_sessions.assert_called_once_with("10.0.0.5")
-    assert result == [
-        {
-            "id": "abc",
-            "name": "tank test",
-            "display_name": "tank test",
-            "pod_name": "session-abc",
-            "mode": "codex_gui",
-            "status": "Running",
-            "url": "https://tank.romaine.life/?session=abc",
-        },
-        {
-            "id": "05e41f7bfe",
-            "name": None,
-            "display_name": "05e41f7b",
-            "pod_name": "session-05e41f7bfe",
-            "mode": "codex_gui",
-            "status": "Running",
-            "url": "https://tank.romaine.life/?session=05e41f7bfe",
-        },
-    ]
-
-
-# ---------------------------------------------------------------------------
-# resolve_session
-# ---------------------------------------------------------------------------
+    assert result[0]["display_name"] == "tank test"
+    assert result[1]["display_name"] == "xyz"
 
 
 def test_resolve_session_finds_matching_id(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
-        {"id": "xyz", "name": "other", "pod_name": "session-xyz"},
-    ]
+    client.list_sessions.return_value = [{"id": "abc"}, {"id": "xyz"}]
     fn = _get_tool(mcp, "resolve_session")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_ref="abc")
-    client.list_sessions.assert_called_once_with("10.0.0.5")
-    assert result["name"] == "tank test"
+    with _bearer("jwt"):
+        result = fn("xyz")
+    assert result == {"id": "xyz"}
 
 
-def test_resolve_session_finds_matching_friendly_name(mcp_client_pair) -> None:
+def test_resolve_session_finds_friendly_name(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
-        {"id": "xyz", "name": "other", "pod_name": "session-xyz"},
+        {"id": "abc", "name": "tank test"},
+        {"id": "xyz", "name": "other"},
     ]
     fn = _get_tool(mcp, "resolve_session")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_ref="tank test")
+    with _bearer("jwt"):
+        result = fn("tank test")
     assert result["id"] == "abc"
-
-
-def test_resolve_session_finds_default_display_name(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.list_sessions.return_value = [
-        {"id": "05e41f7bfe", "name": None, "pod_name": "session-05e41f7bfe"},
-    ]
-    fn = _get_tool(mcp, "resolve_session")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_ref="05e41f7b")
-    assert result["id"] == "05e41f7bfe"
 
 
 def test_resolve_session_raises_on_ambiguous_name(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test"},
-        {"id": "xyz", "name": "tank test"},
+        {"id": "abc", "name": "shared"},
+        {"id": "xyz", "name": "shared"},
     ]
     fn = _get_tool(mcp, "resolve_session")
-    with _set_ip("10.0.0.5"):
+    with _bearer("jwt"):
         with pytest.raises(ValueError, match="ambiguous"):
-            fn(session_ref="tank test")
+            fn("shared")
 
 
 # ---------------------------------------------------------------------------
-# delete_session
+# delete_session / set_session_name / set_test_environment
 # ---------------------------------------------------------------------------
 
 
@@ -212,45 +164,34 @@ def test_delete_session_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.delete_session.return_value = {"id": "abc", "status": "deleted"}
     fn = _get_tool(mcp, "delete_session")
-    with _set_ip("10.0.0.5"):
+    with _bearer("jwt"):
         result = fn(session_id="abc")
-    client.delete_session.assert_called_once_with("10.0.0.5", session_id="abc")
+    client.delete_session.assert_called_once_with("jwt", session_id="abc")
     assert result["status"] == "deleted"
-
-
-# ---------------------------------------------------------------------------
-# set_session_name
-# ---------------------------------------------------------------------------
 
 
 def test_set_session_name_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.set_session_name.return_value = {"id": "abc", "name": "watcher"}
+    client.set_session_name.return_value = {"id": "abc", "name": "new"}
     fn = _get_tool(mcp, "set_session_name")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_id="abc", name="watcher")
-    client.set_session_name.assert_called_once_with("10.0.0.5", session_id="abc", name="watcher")
-    assert result["name"] == "watcher"
+    with _bearer("jwt"):
+        fn(session_id="abc", name="new")
+    client.set_session_name.assert_called_once_with("jwt", session_id="abc", name="new")
 
 
 def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.set_test_environment.return_value = {"id": "abc", "test_state": {"slot_index": 2}}
+    client.set_test_environment.return_value = {"id": "abc"}
     fn = _get_tool(mcp, "set_test_environment")
-    with _set_ip("10.0.0.5"):
-        result = fn(
-            session_id="abc",
-            slot_index=2,
-            url="https://tank-slot-2.tank.dev.romaine.life",
-        )
+    with _bearer("jwt"):
+        fn(session_id="abc", slot_index=2, url="https://slot-2")
     client.set_test_environment.assert_called_once_with(
-        "10.0.0.5",
+        "jwt",
         session_id="abc",
         active=True,
         slot_index=2,
-        url="https://tank-slot-2.tank.dev.romaine.life",
+        url="https://slot-2",
     )
-    assert result["test_state"]["slot_index"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -260,40 +201,20 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
 
 def test_get_session_url_finds_matching_session(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.list_sessions.return_value = [
-        {"id": "abc", "url": "https://tank.romaine.life/?session=abc"},
-        {"id": "xyz", "url": "https://tank.romaine.life/?session=xyz"},
-    ]
+    client.list_sessions.return_value = [{"id": "abc", "url": "https://tank/abc"}]
     fn = _get_tool(mcp, "get_session_url")
-    with _set_ip("10.0.0.5"):
+    with _bearer("jwt"):
         result = fn(session_id="abc")
-    assert result["session_id"] == "abc"
-    assert result["url"].endswith("?session=abc")
-
-
-def test_get_session_url_accepts_friendly_name(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.list_sessions.return_value = [
-        {
-            "id": "abc",
-            "name": "tank test",
-            "url": "https://tank.romaine.life/?session=abc",
-        },
-    ]
-    fn = _get_tool(mcp, "get_session_url")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_id="tank test")
-    assert result["session_id"] == "abc"
-    assert result["url"].endswith("?session=abc")
+    assert result == {"session_id": "abc", "url": "https://tank/abc"}
 
 
 def test_get_session_url_raises_when_not_found(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
-    client.list_sessions.return_value = [{"id": "xyz", "url": "https://tank.romaine.life/?session=xyz"}]
+    client.list_sessions.return_value = []
     fn = _get_tool(mcp, "get_session_url")
-    with _set_ip("10.0.0.5"):
-        with pytest.raises(ValueError, match="not found or not owned"):
-            fn(session_id="abc")
+    with _bearer("jwt"):
+        with pytest.raises(ValueError, match="not found"):
+            fn(session_id="nope")
 
 
 # ---------------------------------------------------------------------------
@@ -305,12 +226,12 @@ def test_send_prompt_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.send_message.return_value = {"status": "queued"}
     fn = _get_tool(mcp, "send_prompt")
-    with _set_ip("10.0.0.5"):
-        result = fn(session_id="abc", prompt="keep going")
+    with _bearer("jwt"):
+        result = fn(session_id="abc", prompt="hi")
     client.send_message.assert_called_once_with(
-        "10.0.0.5",
+        "jwt",
         session_id="abc",
-        prompt="keep going",
+        prompt="hi",
         model=None,
         permission_mode=None,
     )
@@ -321,7 +242,7 @@ def test_send_prompt_forwards_optional_model(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.send_message.return_value = {"status": "queued"}
     fn = _get_tool(mcp, "send_prompt")
-    with _set_ip("10.0.0.5"):
+    with _bearer("jwt"):
         fn(session_id="abc", prompt="hi", model="claude-opus-4-7")
     assert client.send_message.call_args.kwargs["model"] == "claude-opus-4-7"
 
@@ -335,51 +256,11 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.spawn_run.return_value = {"session": {"id": "new"}, "status": "queued"}
     fn = _get_tool(mcp, "spawn_run_session")
-    with _set_ip("10.0.0.5"):
-        result = fn(prompt="investigate issue")
+    with _bearer("eyJ.fake.jwt"):
+        result = fn(prompt="investigate issue", name="child-1")
     client.spawn_run.assert_called_once_with(
-        "10.0.0.5",
-        prompt="investigate issue",
-        mode="claude_gui",
-        name=None,
-        model=None,
-        permission_mode=None,
-    )
-    assert result["status"] == "queued"
-
-
-# ---------------------------------------------------------------------------
-# spawn_service_session — auth.romaine.life service-principal path (#486)
-# ---------------------------------------------------------------------------
-
-
-def _set_service_bearer(jwt: str | None):
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        token = SERVICE_BEARER.set(jwt)
-        try:
-            yield
-        finally:
-            SERVICE_BEARER.reset(token)
-
-    return _ctx()
-
-
-def test_spawn_service_session_forwards_jwt_to_client(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.spawn_session_as_service.return_value = {
-        "session": {"id": "new"},
-        "status": "queued",
-    }
-    fn = _get_tool(mcp, "spawn_service_session")
-    with _set_service_bearer("eyJ.fake.jwt"):
-        with _set_ip("10.0.0.5"):
-            result = fn(prompt="investigate", name="child-1")
-    client.spawn_session_as_service.assert_called_once_with(
         "eyJ.fake.jwt",
-        prompt="investigate",
+        prompt="investigate issue",
         mode="claude_gui",
         name="child-1",
         model=None,
@@ -388,28 +269,9 @@ def test_spawn_service_session_forwards_jwt_to_client(mcp_client_pair) -> None:
     assert result["status"] == "queued"
 
 
-def test_spawn_service_session_raises_without_service_bearer(mcp_client_pair) -> None:
+def test_spawn_run_session_raises_without_service_bearer(mcp_client_pair) -> None:
     mcp, _ = mcp_client_pair
-    fn = _get_tool(mcp, "spawn_service_session")
-    with _set_service_bearer(None):
+    fn = _get_tool(mcp, "spawn_run_session")
+    with _bearer(None):
         with pytest.raises(ValueError, match="service-principal authentication required"):
             fn(prompt="anything")
-
-
-def test_spawn_service_session_does_not_require_pod_ip_when_bearer_present(
-    mcp_client_pair,
-) -> None:
-    # The tool's gate is the service bearer; the pod IP is only used by
-    # the client's follow-up ready-wait + message queue path. The tool
-    # itself accepts a bearer-only caller.
-    mcp, client = mcp_client_pair
-    client.spawn_session_as_service.return_value = {
-        "session": {"id": "new"},
-        "status": "created",
-    }
-    fn = _get_tool(mcp, "spawn_service_session")
-    with _set_service_bearer("eyJ.fake.jwt"):
-        with _set_ip(None):
-            result = fn(prompt="hi")
-    assert result["status"] == "created"
-    client.spawn_session_as_service.assert_called_once()
