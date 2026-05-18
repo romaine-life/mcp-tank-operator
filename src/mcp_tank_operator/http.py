@@ -27,7 +27,12 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
 
-from .caller import SERVICE_BEARER, SERVICE_BEARER_HEADER
+from .caller import (
+    ORIGIN_SESSION_HEADER,
+    ORIGIN_SESSION_ID,
+    SERVICE_BEARER,
+    SERVICE_BEARER_HEADER,
+)
 from .client import TankClient
 from .tools import register_tools
 
@@ -43,10 +48,15 @@ class CallerIdentityMiddleware(BaseHTTPMiddleware):
         bearer = request.headers.get(SERVICE_BEARER_HEADER)
         if bearer is not None:
             bearer = bearer.strip() or None
+        origin = request.headers.get(ORIGIN_SESSION_HEADER)
+        if origin is not None:
+            origin = origin.strip() or None
         token = SERVICE_BEARER.set(bearer)
+        origin_token = ORIGIN_SESSION_ID.set(origin)
         try:
             return await call_next(request)
         finally:
+            ORIGIN_SESSION_ID.reset(origin_token)
             SERVICE_BEARER.reset(token)
 
 

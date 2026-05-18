@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-from mcp_tank_operator.caller import SERVICE_BEARER  # noqa: E402
+from mcp_tank_operator.caller import ORIGIN_SESSION_ID, SERVICE_BEARER  # noqa: E402
 from mcp_tank_operator.tools import register_tools  # noqa: E402
 
 
@@ -43,6 +43,23 @@ def _bearer(jwt: str | None):
         yield
     finally:
         SERVICE_BEARER.reset(token)
+
+
+@contextlib.contextmanager
+def _origin(session_id: str | None):
+    """Bind ORIGIN_SESSION_ID for the duration of a tool call.
+
+    Mirrors what the HTTP middleware does when an inbound request
+    carries the X-Tank-Origin-Session-Id header — namely, lets the
+    tool's call to TankClient forward it as the origin_session_id kwarg
+    so tank-operator stamps it on the persisted user_message.created
+    event.
+    """
+    token = ORIGIN_SESSION_ID.set(session_id)
+    try:
+        yield
+    finally:
+        ORIGIN_SESSION_ID.reset(token)
 
 
 def _get_tool(mcp: FastMCP, name: str):
@@ -234,6 +251,7 @@ def test_send_prompt_delegates_to_client(mcp_client_pair) -> None:
         prompt="hi",
         model=None,
         permission_mode=None,
+        origin_session_id=None,
     )
     assert result["status"] == "queued"
 
@@ -245,6 +263,30 @@ def test_send_prompt_forwards_optional_model(mcp_client_pair) -> None:
     with _bearer("jwt"):
         fn(session_id="abc", prompt="hi", model="claude-opus-4-7")
     assert client.send_message.call_args.kwargs["model"] == "claude-opus-4-7"
+
+
+def test_send_prompt_forwards_origin_session_id(mcp_client_pair) -> None:
+    """Cross-session handoff path: when the calling pod's mcp-auth-proxy
+    set X-Tank-Origin-Session-Id, the middleware binds it into
+    ORIGIN_SESSION_ID and the tool forwards it as origin_session_id so
+    tank-operator stamps it on the user_message.created event and the
+    frontend renders the parent session's avatar.
+    """
+    mcp, client = mcp_client_pair
+    client.send_message.return_value = {"status": "queued"}
+    fn = _get_tool(mcp, "send_prompt")
+    with _bearer("jwt"), _origin("42"):
+        fn(session_id="abc", prompt="hi")
+    assert client.send_message.call_args.kwargs["origin_session_id"] == "42"
+
+
+def test_spawn_run_session_forwards_origin_session_id(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.spawn_run.return_value = {"session": {"id": "new"}, "status": "queued"}
+    fn = _get_tool(mcp, "spawn_run_session")
+    with _bearer("jwt"), _origin("42"):
+        fn(prompt="investigate issue")
+    assert client.spawn_run.call_args.kwargs["origin_session_id"] == "42"
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +307,7 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
         name="child-1",
         model=None,
         permission_mode=None,
+        origin_session_id=None,
     )
     assert result["status"] == "queued"
 

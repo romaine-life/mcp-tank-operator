@@ -56,8 +56,24 @@ class TankClient:
     def __init__(self, orchestrator_url: str = ORCHESTRATOR_URL) -> None:
         self._url = orchestrator_url.rstrip("/")
 
-    def _headers(self, service_jwt: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {service_jwt}"}
+    def _headers(
+        self,
+        service_jwt: str,
+        *,
+        origin_session_id: str | None = None,
+    ) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {service_jwt}"}
+        # Forward the originating tank-operator session id on handoff
+        # calls (POST /api/internal/sessions/{id}/messages). Tank-operator
+        # uses it to stamp the persisted user_message.created event so
+        # the frontend renders the parent session's avatar on the user
+        # bubble instead of the human owner's Gravatar. Header name is
+        # shared with mcp-auth-proxy (stamping side) and
+        # tank-operator/backend-go/cmd/tank-operator/handlers_internal.go
+        # (reading side); a cross-repo coordinated deploy applies.
+        if origin_session_id:
+            headers["X-Tank-Origin-Session-Id"] = origin_session_id
+        return headers
 
     def list_sessions(self, service_jwt: str) -> list[dict[str, Any]]:
         r = httpx.get(
@@ -130,6 +146,7 @@ class TankClient:
         prompt: str,
         model: str | None = None,
         permission_mode: str | None = None,
+        origin_session_id: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"prompt": prompt}
         if model:
@@ -139,7 +156,7 @@ class TankClient:
         r = httpx.post(
             f"{self._url}/api/internal/sessions/{session_id}/messages",
             json=body,
-            headers=self._headers(service_jwt),
+            headers=self._headers(service_jwt, origin_session_id=origin_session_id),
             timeout=15.0,
         )
         _check(r)
@@ -153,8 +170,17 @@ class TankClient:
         name: str | None = None,
         model: str | None = None,
         permission_mode: str | None = None,
+        origin_session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Create a session, wait for ready, then queue the first prompt."""
+        """Create a session, wait for ready, then queue the first prompt.
+
+        `origin_session_id` rides only on the inner send_message call,
+        not on the create. Tank-operator stamps it onto the persisted
+        user_message.created event so the frontend renders the parent
+        session's avatar on the first user bubble in the new session —
+        making it visually obvious that the prompt came from another
+        agent rather than the human owner.
+        """
         body: dict[str, Any] = {"mode": mode}
         if name:
             body["name"] = name
@@ -180,6 +206,7 @@ class TankClient:
             prompt=prompt,
             model=model,
             permission_mode=permission_mode,
+            origin_session_id=origin_session_id,
         )
         return {"status": "queued", "session": session, "message": message}
 
