@@ -126,6 +126,55 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         return _resolve_session_ref(client.list_sessions(_service_bearer()), session_ref)
 
     @mcp.tool()
+    def read_transcript(
+        session_id: str,
+        anchor: str | None = None,
+        rows: int | None = None,
+        before_cursor: str | None = None,
+        timeline_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Read another session's conversation transcript (the caller's own).
+
+        Use this to inspect what a sibling session has been doing — for
+        example, to triage a session that appears stuck before you decide
+        whether to send_prompt it, delete it, or escalate. This reads the
+        durable transcript projection from Postgres, so it works even after
+        the target session's pod is gone (pod logs do not survive that).
+
+        The caller may only read sessions it owns; an unknown or other-user
+        session id returns an error (404 masked as "not found").
+
+        Returns the projected transcript-row read model:
+          - `rows`: projected transcript rows (messages, meta/status rows,
+            compacted Turn-activity shells) for this page.
+          - `next_cursor` / `prev_cursor`: paginate forward (newer) / backward
+            (older) by passing `prev_cursor` back as `before_cursor`.
+          - `found_oldest` / `found_newest`: whether this page reached an end.
+          - `live_order_key`: the durable tail's order_key — compare with the
+            last row to tell whether the session is still producing events.
+
+        Args:
+          - `session_id`: the target session id (use list_sessions /
+            resolve_session to find it).
+          - `anchor`: "newest" (default — the tail, best for "what is it doing
+            now") or "oldest" (the start of the conversation).
+          - `rows`: page size; the server clamps to its max.
+          - `before_cursor`: a `prev_cursor` from an earlier call, to page
+            backward through history.
+          - `timeline_id`: center the page on a specific transcript row.
+
+        `anchor`, `before_cursor`, and `timeline_id` are mutually exclusive.
+        """
+        return client.read_transcript(
+            _service_bearer(),
+            session_id=session_id,
+            anchor=anchor,
+            rows=rows,
+            before_cursor=before_cursor,
+            timeline_id=timeline_id,
+        )
+
+    @mcp.tool()
     def create_session(mode: str = "claude_gui") -> dict[str, Any]:
         """Create a new tank-operator session pod owned by the calling user.
 
