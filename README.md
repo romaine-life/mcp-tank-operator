@@ -15,6 +15,7 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
 - `list_sessions()` — sessions owned by the calling user.
 - `list_session_refs()` — low-noise list of session ids and Tank UI display names.
 - `resolve_session(session_ref)` — resolve a Tank UI display name or session id to the full session record.
+- `read_transcript(session_id, ...)` — read a caller-owned session's conversation transcript (projected rows + pagination cursors). Reads the durable Postgres projection, so it works even after the target session's pod is gone — useful for triaging a stuck sibling session before deciding to prompt, delete, or escalate.
 - `create_session(mode)` — spawn a new session pod. Current chat modes are `claude_gui` and `codex_gui`; default is `claude_gui`.
 - `delete_session(session_id)` — delete one of the caller's sessions.
 - `set_session_name(session_id, name)` — set or clear the friendly display name.

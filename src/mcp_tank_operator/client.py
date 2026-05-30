@@ -84,6 +84,50 @@ class TankClient:
         _check(r)
         return r.json()
 
+    def read_transcript(
+        self,
+        service_jwt: str,
+        session_id: str,
+        anchor: str | None = None,
+        rows: int | None = None,
+        before_cursor: str | None = None,
+        timeline_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Read the projected transcript-row read model for a session.
+
+        GET /api/internal/sessions/{id}/timeline. The orchestrator scopes the
+        read to the JWT's actor_email (same gate as the browser /timeline),
+        so the caller can only read sessions it owns; a cross-user or missing
+        session returns 404.
+
+        Query params mirror the browser /timeline contract:
+          - anchor: "newest" (default, tail) or "oldest" (head).
+          - rows: page size (server clamps to its max).
+          - before_cursor: page strictly older than a prev_cursor from an
+            earlier response — the backward-pagination path through history.
+          - timeline_id: center the page on a specific transcript row.
+
+        before_cursor / timeline_id / anchor are mutually exclusive; the
+        server rejects more than one anchor with 400.
+        """
+        params: dict[str, str] = {}
+        if anchor:
+            params["anchor"] = anchor
+        if rows is not None:
+            params["rows"] = str(rows)
+        if before_cursor:
+            params["before_cursor"] = before_cursor
+        if timeline_id:
+            params["timeline_id"] = timeline_id
+        r = httpx.get(
+            f"{self._url}/api/internal/sessions/{session_id}/timeline",
+            params=params or None,
+            headers=self._headers(service_jwt),
+            timeout=15.0,
+        )
+        _check(r)
+        return r.json()
+
     def create_session(self, service_jwt: str, mode: str) -> dict[str, Any]:
         r = httpx.post(
             f"{self._url}/api/internal/sessions",

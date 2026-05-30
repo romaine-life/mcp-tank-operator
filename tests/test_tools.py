@@ -122,6 +122,48 @@ def test_create_session_delegates_to_client(mcp_client_pair) -> None:
 
 
 # ---------------------------------------------------------------------------
+# read_transcript
+# ---------------------------------------------------------------------------
+
+
+def test_read_transcript_raises_when_no_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "read_transcript")
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn(session_id="63")
+
+
+def test_read_transcript_delegates_to_client(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.read_transcript.return_value = {"session_id": "63", "rows": []}
+    fn = _get_tool(mcp, "read_transcript")
+    with _bearer("eyJ.fake.jwt"):
+        result = fn(session_id="63")
+    client.read_transcript.assert_called_once_with(
+        "eyJ.fake.jwt",
+        session_id="63",
+        anchor=None,
+        rows=None,
+        before_cursor=None,
+        timeline_id=None,
+    )
+    assert result["session_id"] == "63"
+
+
+def test_read_transcript_forwards_pagination_args(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.read_transcript.return_value = {"rows": []}
+    fn = _get_tool(mcp, "read_transcript")
+    with _bearer("jwt"):
+        fn(session_id="63", anchor="oldest", rows=40, before_cursor="cur-abc")
+    kwargs = client.read_transcript.call_args.kwargs
+    assert kwargs["anchor"] == "oldest"
+    assert kwargs["rows"] == 40
+    assert kwargs["before_cursor"] == "cur-abc"
+
+
+# ---------------------------------------------------------------------------
 # list_session_refs / resolve_session — friendly-name pathway
 # ---------------------------------------------------------------------------
 

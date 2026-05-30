@@ -94,6 +94,43 @@ def test_list_sessions_sends_get_with_jwt_bearer(client: TankClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# read_transcript
+# ---------------------------------------------------------------------------
+
+
+def test_read_transcript_sends_get_with_jwt_and_no_params(client: TankClient) -> None:
+    body = {"session_id": "63", "rows": [], "projection": "server_transcript_rows_v1"}
+    with patch("httpx.get", return_value=_ok_response(body)) as mock_get:
+        result = client.read_transcript("jwt", session_id="63")
+
+    assert result == body
+    call = mock_get.call_args
+    assert call.args[0].endswith("/api/internal/sessions/63/timeline")
+    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+    # No anchor/rows passed → no query params (None, not an empty dict).
+    assert call.kwargs["params"] is None
+
+
+def test_read_transcript_forwards_query_params(client: TankClient) -> None:
+    with patch("httpx.get", return_value=_ok_response({"rows": []})) as mock_get:
+        client.read_transcript(
+            "jwt",
+            session_id="63",
+            anchor="oldest",
+            rows=40,
+            before_cursor="cur-abc",
+        )
+    params = mock_get.call_args.kwargs["params"]
+    assert params == {"anchor": "oldest", "rows": "40", "before_cursor": "cur-abc"}
+
+
+def test_read_transcript_raises_on_404(client: TankClient) -> None:
+    with patch("httpx.get", return_value=_resp(404, '{"detail": "session not found"}', method="GET")):
+        with pytest.raises(httpx.HTTPStatusError):
+            client.read_transcript("jwt", session_id="nope")
+
+
+# ---------------------------------------------------------------------------
 # create_session
 # ---------------------------------------------------------------------------
 
