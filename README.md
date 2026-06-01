@@ -15,6 +15,8 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
 - `list_sessions()` — sessions owned by the calling user.
 - `list_session_refs()` — low-noise list of session ids and Tank UI display names.
 - `resolve_session(session_ref)` — resolve a Tank UI display name or session id to the full session record.
+- `get_session_capability_context(capability, session_id)` — warm documentation for rare Tank session capabilities. Currently covers `spirelens_mcp`, including the native MCP endpoint, direct auth.romaine.life SSH certificate path, and the difference from Glimmung run callback URLs.
+- `verify_spirelens_session_access(session_id)` — read-only inspection for a caller-owned session's SpireLens MCP wiring: selected capability, `/workspace/.mcp.json` server entry, local proxy target, and expected host lifecycle tools.
 - `read_transcript(session_id, ...)` — read a caller-owned session's conversation transcript (projected rows + pagination cursors). Reads the durable Postgres projection, so it works even after the target session's pod is gone — useful for triaging a stuck sibling session before deciding to prompt, delete, or escalate.
 - `create_session(mode)` — spawn a new session pod. Current chat modes are `claude_gui` and `codex_gui`; default is `claude_gui`.
 - `delete_session(session_id)` — delete one of the caller's sessions.

@@ -98,6 +98,18 @@ def test_list_sessions_sends_get_with_jwt_bearer(client: TankClient) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_get_session_capabilities_sends_get_with_jwt(client: TankClient) -> None:
+    body = {"session": {"id": "63"}, "mcp_servers": [], "mcp_tools": []}
+    with patch("httpx.get", return_value=_ok_response(body)) as mock_get:
+        result = client.get_session_capabilities("jwt", session_id="63")
+
+    assert result == body
+    call = mock_get.call_args
+    assert call.args[0].endswith("/api/internal/sessions/63/capabilities")
+    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+    assert call.kwargs["timeout"] == 20.0
+
+
 def test_read_transcript_sends_get_with_jwt_and_no_params(client: TankClient) -> None:
     body = {"session_id": "63", "rows": [], "projection": "server_transcript_rows_v1"}
     with patch("httpx.get", return_value=_ok_response(body)) as mock_get:

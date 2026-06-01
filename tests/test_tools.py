@@ -215,6 +215,130 @@ def test_resolve_session_raises_on_ambiguous_name(mcp_client_pair) -> None:
 
 
 # ---------------------------------------------------------------------------
+# SpireLens capability context / verifier
+# ---------------------------------------------------------------------------
+
+
+def test_get_session_capability_context_returns_static_docs_without_origin(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "get_session_capability_context")
+
+    result = fn()
+
+    assert result["capability"] == "spirelens_mcp"
+    assert result["session"]["inspected"] is False
+    assert result["ssh"]["cert_endpoint"].endswith("/api/auth/exchange/ssh-cert")
+    assert result["ssh"]["cert_principal"] == "spirelens-agent"
+    assert result["ssh"]["login_user"] == "nelsonlaptopuser"
+    client.get_session_capabilities.assert_not_called()
+
+
+def test_get_session_capability_context_inspects_origin_session(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.get_session_capabilities.return_value = {
+        "session": {
+            "id": "42",
+            "mode": "codex_gui",
+            "status": "Active",
+            "capabilities": ["spirelens_mcp"],
+        },
+        "mcp_servers": [
+            {
+                "name": "spire-lens-mcp",
+                "target": "http://127.0.0.1:9997/mcp",
+            }
+        ],
+        "mcp_tools": [
+            {"server": "spire-lens-mcp", "name": "bridge_health"},
+            {"server": "spire-lens-mcp", "name": "get_host_status"},
+            {"server": "spire-lens-mcp", "name": "start_sts2"},
+            {"server": "spire-lens-mcp", "name": "stop_sts2"},
+            {"server": "spire-lens-mcp", "name": "restart_sts2"},
+        ],
+    }
+    fn = _get_tool(mcp, "get_session_capability_context")
+
+    with _bearer("jwt"), _origin("42"):
+        result = fn()
+
+    client.get_session_capabilities.assert_called_once_with("jwt", "42")
+    assert result["session"]["enabled"] is True
+    assert result["session"]["tools"]["missing"] == []
+
+
+def test_get_session_capability_context_rejects_unknown_capability(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "get_session_capability_context")
+
+    with pytest.raises(ValueError, match="unsupported capability"):
+        fn(capability="unknown")
+
+
+def test_verify_spirelens_session_access_reports_ok(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.get_session_capabilities.return_value = {
+        "session": {
+            "id": "42",
+            "mode": "codex_gui",
+            "status": "Active",
+            "capabilities": ["spirelens_mcp"],
+        },
+        "mcp_servers": [
+            {
+                "name": "spire-lens-mcp",
+                "target": "http://127.0.0.1:9997/mcp",
+            }
+        ],
+        "mcp_tools": [
+            {"server": "spire-lens-mcp", "name": "bridge_health"},
+            {"server": "spire-lens-mcp", "name": "get_host_status"},
+            {"server": "spire-lens-mcp", "name": "start_sts2"},
+            {"server": "spire-lens-mcp", "name": "stop_sts2"},
+            {"server": "spire-lens-mcp", "name": "restart_sts2"},
+        ],
+    }
+    fn = _get_tool(mcp, "verify_spirelens_session_access")
+
+    with _bearer("jwt"), _origin("42"):
+        result = fn()
+
+    assert result["status"] == "ok"
+    assert all(check["ok"] for check in result["checks"])
+
+
+def test_verify_spirelens_session_access_reports_degraded_missing_tools(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.get_session_capabilities.return_value = {
+        "session": {"id": "42", "capabilities": ["spirelens_mcp"]},
+        "mcp_servers": [
+            {
+                "name": "spire-lens-mcp",
+                "target": "http://127.0.0.1:9997/mcp",
+            }
+        ],
+        "mcp_tools": [{"server": "spire-lens-mcp", "name": "bridge_health"}],
+        "mcp_tool_errors": [{"server": "spire-lens-mcp", "error": "Missing session ID"}],
+    }
+    fn = _get_tool(mcp, "verify_spirelens_session_access")
+
+    with _bearer("jwt"), _origin("42"):
+        result = fn()
+
+    assert result["status"] == "degraded"
+    assert "restart_sts2" in result["session"]["tools"]["missing"]
+    assert any("mcp_tool_errors" in action for action in result["next_actions"])
+
+
+def test_verify_spirelens_session_access_requires_session_target(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "verify_spirelens_session_access")
+
+    with _bearer("jwt"), _origin(None):
+        with pytest.raises(ValueError, match="session_id is required"):
+            fn()
+
+
+# ---------------------------------------------------------------------------
 # delete_session / set_session_name / set_test_environment
 # ---------------------------------------------------------------------------
 

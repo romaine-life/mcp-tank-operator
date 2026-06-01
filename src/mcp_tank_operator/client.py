@@ -84,6 +84,16 @@ class TankClient:
         _check(r)
         return r.json()
 
+    def get_session_capabilities(self, service_jwt: str, session_id: str) -> dict[str, Any]:
+        """Return the skills and MCP surface visible inside a session pod."""
+        r = httpx.get(
+            f"{self._url}/api/internal/sessions/{session_id}/capabilities",
+            headers=self._headers(service_jwt),
+            timeout=20.0,
+        )
+        _check(r)
+        return r.json()
+
     def read_transcript(
         self,
         service_jwt: str,

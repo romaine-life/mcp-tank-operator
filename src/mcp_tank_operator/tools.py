@@ -26,6 +26,17 @@ _SERVICE_BEARER_MISSING_MSG = (
     "https://github.com/nelsong6/tank-operator/issues/486."
 )
 
+_SPIRELENS_CAPABILITY = "spirelens_mcp"
+_SPIRELENS_MCP_SERVER = "spire-lens-mcp"
+_SPIRELENS_MCP_URL = "http://127.0.0.1:9997/mcp"
+_SPIRELENS_REQUIRED_TOOLS = (
+    "bridge_health",
+    "get_host_status",
+    "start_sts2",
+    "stop_sts2",
+    "restart_sts2",
+)
+
 
 def _service_bearer() -> str:
     jwt = current_service_bearer()
@@ -89,6 +100,136 @@ def _session_ref_summary(session: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _require_supported_capability(capability: str) -> str:
+    normalized = capability.strip().casefold()
+    if normalized != _SPIRELENS_CAPABILITY:
+        raise ValueError(
+            f"unsupported capability {capability!r}; currently supported: {_SPIRELENS_CAPABILITY}"
+        )
+    return _SPIRELENS_CAPABILITY
+
+
+def _target_session_id(client: TankClient, bearer: str, session_ref: str | None) -> str:
+    ref = (session_ref or "").strip()
+    if ref:
+        session = _resolve_session_ref(client.list_sessions(bearer), ref)
+        session_id = str(session.get("id") or "").strip()
+        if not session_id:
+            raise ValueError(f"session {session_ref!r} resolved without an id")
+        return session_id
+
+    origin_session_id = (current_origin_session_id() or "").strip()
+    if origin_session_id:
+        return origin_session_id
+
+    raise ValueError(
+        "session_id is required because the calling pod did not provide "
+        "X-Tank-Origin-Session-Id; pass the current session id or Tank display name"
+    )
+
+
+def _spirelens_static_context() -> dict[str, Any]:
+    return {
+        "capability": _SPIRELENS_CAPABILITY,
+        "summary": (
+            "Opt-in Tank session capability that joins the SpireLens tailnet, "
+            "exposes the game-host MCP at 127.0.0.1:9997, and lets sessions "
+            "mint short-lived SSH certificates directly from auth.romaine.life."
+        ),
+        "mcp": {
+            "server_name": _SPIRELENS_MCP_SERVER,
+            "local_url": _SPIRELENS_MCP_URL,
+            "required_host_tools": list(_SPIRELENS_REQUIRED_TOOLS),
+        },
+        "tailnet": {
+            "socket": "/tmp/tailscaled.sock",
+            "session_tag": "tag:spirelens-orchestrator",
+            "host_tag": "tag:spirelens-host",
+            "host_name": "nelsonlaptop",
+            "host_mcp_port": 15527,
+            "bridge_port_on_host": 15526,
+        },
+        "ssh": {
+            "tank_session_mode": "auth-romaine-direct",
+            "glimmung_run_mode": "GLIMMUNG_SSH_CERT_URL callback URLs are only present in Glimmung run pods.",
+            "token_path": "/var/run/secrets/auth.romaine.life/token",
+            "cert_endpoint": "https://auth.romaine.life/api/auth/exchange/ssh-cert",
+            "cert_principal": "spirelens-agent",
+            "login_user": "nelsonlaptopuser",
+            "proxy_command": "tailscale --socket=/tmp/tailscaled.sock nc %h %p",
+            "notes": [
+                "The SSH username is the Windows account, not the certificate principal.",
+                "Raw SSH through tailscale nc proves network reachability but fails auth until the IdP-signed cert is supplied.",
+            ],
+        },
+        "docs": [
+            "/workspace/.tank/docs/spirelens-mcp-access.md",
+            "/workspace/tank-operator/docs/tailnet-host-access.md",
+            "/workspace/spirelens/docs/laptop-host-setup.md",
+        ],
+    }
+
+
+def _tool_names(capabilities: dict[str, Any], server_name: str) -> list[str]:
+    names = {
+        str(tool.get("name") or "").strip()
+        for tool in capabilities.get("mcp_tools", [])
+        if isinstance(tool, dict) and tool.get("server") == server_name
+    }
+    return sorted(name for name in names if name)
+
+
+def _server_entry(capabilities: dict[str, Any], server_name: str) -> dict[str, Any] | None:
+    for server in capabilities.get("mcp_servers", []):
+        if isinstance(server, dict) and server.get("name") == server_name:
+            return server
+    return None
+
+
+def _server_errors(capabilities: dict[str, Any], server_name: str) -> list[str]:
+    return [
+        str(error.get("error") or "")
+        for error in capabilities.get("mcp_tool_errors", [])
+        if isinstance(error, dict) and error.get("server") == server_name
+    ]
+
+
+def _spirelens_session_context(capabilities: dict[str, Any]) -> dict[str, Any]:
+    session = capabilities.get("session") if isinstance(capabilities.get("session"), dict) else {}
+    selected = [
+        str(item)
+        for item in (session.get("capabilities") or [])
+        if str(item).strip()
+    ]
+    server = _server_entry(capabilities, _SPIRELENS_MCP_SERVER)
+    tools = _tool_names(capabilities, _SPIRELENS_MCP_SERVER)
+    missing_tools = sorted(set(_SPIRELENS_REQUIRED_TOOLS) - set(tools))
+    return {
+        "inspected": True,
+        "session_id": session.get("id"),
+        "mode": session.get("mode"),
+        "status": session.get("status"),
+        "selected_capabilities": selected,
+        "enabled": _SPIRELENS_CAPABILITY in selected,
+        "mcp_server": {
+            "present": server is not None,
+            "target": server.get("target") if server else None,
+            "expected_target": _SPIRELENS_MCP_URL,
+            "target_matches_expected": (server or {}).get("target") == _SPIRELENS_MCP_URL,
+        },
+        "tools": {
+            "present": tools,
+            "required": list(_SPIRELENS_REQUIRED_TOOLS),
+            "missing": missing_tools,
+        },
+        "tool_errors": _server_errors(capabilities, _SPIRELENS_MCP_SERVER),
+    }
+
+
+def _check_entry(name: str, ok: bool, evidence: Any) -> dict[str, Any]:
+    return {"name": name, "ok": ok, "evidence": evidence}
+
+
 def register_tools(mcp: FastMCP, client: TankClient) -> None:
     @mcp.tool()
     def list_sessions() -> list[dict[str, Any]]:
@@ -124,6 +265,112 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         ambiguity error listing the matching ids.
         """
         return _resolve_session_ref(client.list_sessions(_service_bearer()), session_ref)
+
+    @mcp.tool()
+    def get_session_capability_context(
+        capability: str = _SPIRELENS_CAPABILITY,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return warm documentation for a Tank session capability.
+
+        Use this when a user mentions a rare create-time capability and the
+        access path is easy to forget. For `spirelens_mcp`, this explains the
+        native MCP endpoint, the Tank-session SSH certificate path, how that
+        differs from Glimmung run pods, and the session-local docs to read.
+
+        If `session_id` is omitted, the tool inspects the calling session when
+        the mcp-auth-proxy supplied `X-Tank-Origin-Session-Id`; otherwise it
+        returns the static context with `session.inspected=false`.
+        """
+        _require_supported_capability(capability)
+        context = _spirelens_static_context()
+        origin_session_id = (current_origin_session_id() or "").strip()
+        if not (session_id or origin_session_id):
+            context["session"] = {
+                "inspected": False,
+                "reason": "No session_id argument and no X-Tank-Origin-Session-Id header.",
+            }
+            return context
+
+        bearer = _service_bearer()
+        target_id = (
+            _target_session_id(client, bearer, session_id)
+            if session_id
+            else origin_session_id
+        )
+        capabilities = client.get_session_capabilities(bearer, target_id)
+        context["session"] = _spirelens_session_context(capabilities)
+        return context
+
+    @mcp.tool()
+    def verify_spirelens_session_access(session_id: str | None = None) -> dict[str, Any]:
+        """Inspect whether a session has the SpireLens MCP capability wired.
+
+        This is a safe read-only verifier. It asks Tank to inspect the target
+        session pod's `/workspace/.mcp.json` and visible MCP tool inventory,
+        then reports whether the `spirelens_mcp` capability, local
+        `spire-lens-mcp` server entry, and expected host lifecycle tools are
+        present. It does not return credentials or SSH into the laptop.
+
+        Omit `session_id` to verify the calling session. Pass a Tank display
+        name or id to inspect a caller-owned sibling session.
+        """
+        bearer = _service_bearer()
+        target_id = _target_session_id(client, bearer, session_id)
+        capabilities = client.get_session_capabilities(bearer, target_id)
+        session_context = _spirelens_session_context(capabilities)
+        checks = [
+            _check_entry(
+                "session_has_spirelens_mcp_capability",
+                bool(session_context["enabled"]),
+                session_context["selected_capabilities"],
+            ),
+            _check_entry(
+                "workspace_mcp_config_has_spire_lens_mcp",
+                bool(session_context["mcp_server"]["present"]),
+                session_context["mcp_server"],
+            ),
+            _check_entry(
+                "spire_lens_mcp_uses_expected_local_proxy",
+                bool(session_context["mcp_server"]["target_matches_expected"]),
+                session_context["mcp_server"],
+            ),
+            _check_entry(
+                "required_host_lifecycle_tools_are_visible",
+                len(session_context["tools"]["missing"]) == 0,
+                session_context["tools"],
+            ),
+        ]
+
+        if not session_context["enabled"]:
+            status = "not_enabled"
+        elif all(check["ok"] for check in checks):
+            status = "ok"
+        else:
+            status = "degraded"
+
+        next_actions: list[str] = []
+        if not session_context["enabled"]:
+            next_actions.append('Create or switch to a session with capabilities: ["spirelens_mcp"].')
+        if not session_context["mcp_server"]["present"]:
+            next_actions.append("Check that the session mounted mcp.spirelens.json over /workspace/.mcp.json.")
+        if session_context["mcp_server"]["present"] and session_context["tools"]["missing"]:
+            next_actions.append(
+                "Call get_session_capability_context('spirelens_mcp') for the SSH/admin repair path, "
+                "then refresh the host MCP checkout or scheduled task if the host tools are stale."
+            )
+        if session_context["tool_errors"]:
+            next_actions.append("Review mcp_tool_errors from Tank's session capability probe.")
+
+        return {
+            "capability": _SPIRELENS_CAPABILITY,
+            "session_id": target_id,
+            "status": status,
+            "checks": checks,
+            "session": session_context,
+            "next_actions": next_actions,
+            "docs": _spirelens_static_context()["docs"],
+        }
 
     @mcp.tool()
     def read_transcript(
