@@ -302,3 +302,79 @@ class TankClient:
             f"session {session_id} was not ready after {timeout_seconds:.0f}s"
             + (f"; last state: {last_session!r}" if last_session else "")
         )
+
+    # ----- Session-image override (test-slot repoint) ----------------------
+    #
+    # These target a Glimmung TEST SLOT's orchestrator, NOT production. A
+    # slot's orchestrator runs as the `tank-operator` Service in the slot's
+    # own namespace, and the namespace name == the slot name == the session
+    # scope the override is keyed by — so one identifier (`slot`) resolves the
+    # URL host AND the scope. The orchestrator only honors overrides under its
+    # test-env gate (slots) and refuses the production `default` scope, so this
+    # surface cannot repoint production sessions even if misused.
+
+    def _slot_override_url(self, slot: str) -> str:
+        name = slot.strip()
+        if not name:
+            raise ValueError(
+                "slot is required — the Glimmung slot name, e.g. 'tank-operator-slot-2'"
+            )
+        if name in {"default", "tank-operator"}:
+            raise ValueError(
+                f"refusing to target the production orchestrator/scope ({name!r}); "
+                "pass a test-slot name like 'tank-operator-slot-2'"
+            )
+        return (
+            f"http://tank-operator.{name}.svc:80"
+            f"/api/internal/session-scopes/{name}/image-override"
+        )
+
+    def set_session_image_override(
+        self,
+        service_jwt: str,
+        slot: str,
+        *,
+        codex_image: str | None = None,
+        claude_image: str | None = None,
+        git_ref: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if codex_image:
+            body["codex_image"] = codex_image
+        if claude_image:
+            body["claude_image"] = claude_image
+        if git_ref:
+            body["git_ref"] = git_ref
+        r = httpx.put(
+            self._slot_override_url(slot),
+            json=body,
+            headers=self._headers(service_jwt),
+            timeout=20.0,
+        )
+        _check(r)
+        return r.json()
+
+    def get_session_image_override(self, service_jwt: str, slot: str) -> dict[str, Any]:
+        r = httpx.get(
+            self._slot_override_url(slot),
+            headers=self._headers(service_jwt),
+            timeout=15.0,
+        )
+        # 404 is the orchestrator's "no override set" signal — surface it as a
+        # clean negative result rather than an HTTPStatusError.
+        if r.status_code == 404:
+            return {"session_scope": slot.strip(), "override_set": False}
+        _check(r)
+        data = r.json()
+        if isinstance(data, dict):
+            data.setdefault("override_set", True)
+        return data
+
+    def clear_session_image_override(self, service_jwt: str, slot: str) -> dict[str, Any]:
+        r = httpx.delete(
+            self._slot_override_url(slot),
+            headers=self._headers(service_jwt),
+            timeout=15.0,
+        )
+        _check(r)
+        return r.json()

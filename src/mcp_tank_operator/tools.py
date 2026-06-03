@@ -570,3 +570,72 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             # freshly spawned session needs the parent-session avatar.
             origin_session_id=current_origin_session_id(),
         )
+
+    @mcp.tool()
+    def point_slot_session_image(
+        slot: str,
+        codex_image: str | None = None,
+        claude_image: str | None = None,
+        git_ref: str | None = None,
+    ) -> dict[str, Any]:
+        """Point a Glimmung test slot's session image at a branch-built image so
+        NEWLY-created sessions in that slot boot it.
+
+        This is the "make new sessions inherit my branch" repoint. The slot's
+        orchestrator stamps the override onto every session pod it creates from
+        now on — the same image lever production uses, no runtime overlay.
+        Glimmung's `apply_test_slot_hot_swap` patches ALREADY-running pods; this
+        complements it for the pods you haven't created yet.
+
+        Prerequisites:
+          - The image must already exist in ACR. This tool does NOT build images:
+            dispatch the `session-images-build.yml` workflow at your branch first
+            (it pushes a content-fingerprint tag), then pass that tag here.
+          - `slot` is the Glimmung slot name from `checkout_test_slot`, e.g.
+            "tank-operator-slot-2". (That name is also the namespace and the
+            session scope, so one value targets everything.)
+
+        Args:
+          - `slot`: the test-slot name.
+          - `codex_image`: full image ref for codex sessions, e.g.
+            "romainecr.azurecr.io/codex-container:codex-<fingerprint>".
+          - `claude_image`: full image ref for claude sessions.
+          - `git_ref`: optional provenance label stored with the override.
+
+        At least one of `codex_image` / `claude_image` is required. The
+        production scope is refused server-side and only test-env orchestrators
+        honor the override, so this cannot repoint production sessions. Use
+        `get_slot_session_image` to see what new sessions will inherit and
+        `clear_slot_session_image` to revert to the chart-pinned image.
+        """
+        has_codex = bool(codex_image and codex_image.strip())
+        has_claude = bool(claude_image and claude_image.strip())
+        if not (has_codex or has_claude):
+            raise ValueError("at least one of codex_image / claude_image is required")
+        return client.set_session_image_override(
+            _service_bearer(),
+            slot=slot,
+            codex_image=codex_image,
+            claude_image=claude_image,
+            git_ref=git_ref,
+        )
+
+    @mcp.tool()
+    def get_slot_session_image(slot: str) -> dict[str, Any]:
+        """Report a test slot's current session-image override — the authoritative
+        answer to "what image will NEW sessions in this slot boot?".
+
+        Returns the stored override (`session_scope`, `claude_image`,
+        `codex_image`, `git_ref`, `set_by`, `set_at`) or
+        `{"override_set": false}` when none is set (new sessions then boot the
+        slot's chart-pinned image). Read-only.
+        """
+        return client.get_session_image_override(_service_bearer(), slot=slot)
+
+    @mcp.tool()
+    def clear_slot_session_image(slot: str) -> dict[str, Any]:
+        """Clear a test slot's session-image override so new sessions revert to the
+        chart-pinned image. Call this when you finish validating a branch on the
+        slot (or before pointing it somewhere else).
+        """
+        return client.clear_session_image_override(_service_bearer(), slot=slot)

@@ -503,3 +503,63 @@ def test_spawn_run_session_raises_without_service_bearer(mcp_client_pair) -> Non
     with _bearer(None):
         with pytest.raises(ValueError, match="service-principal authentication required"):
             fn(prompt="anything")
+
+
+# ---------------------------------------------------------------------------
+# session-image override repoint tools
+# ---------------------------------------------------------------------------
+
+
+def test_point_slot_session_image_delegates(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "point_slot_session_image")
+    with _bearer("eyJ.fake.jwt"):
+        fn(
+            slot="tank-operator-slot-2",
+            codex_image="romainecr.azurecr.io/codex-container:codex-xyz",
+            git_ref="feat/x",
+        )
+    client.set_session_image_override.assert_called_once_with(
+        "eyJ.fake.jwt",
+        slot="tank-operator-slot-2",
+        codex_image="romainecr.azurecr.io/codex-container:codex-xyz",
+        claude_image=None,
+        git_ref="feat/x",
+    )
+
+
+def test_point_slot_session_image_requires_an_image(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "point_slot_session_image")
+    with _bearer("eyJ.fake.jwt"):
+        with pytest.raises(ValueError, match="at least one"):
+            fn(slot="tank-operator-slot-2")
+    client.set_session_image_override.assert_not_called()
+
+
+def test_get_slot_session_image_delegates(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "get_slot_session_image")
+    with _bearer("eyJ.fake.jwt"):
+        fn(slot="tank-operator-slot-2")
+    client.get_session_image_override.assert_called_once_with(
+        "eyJ.fake.jwt", slot="tank-operator-slot-2",
+    )
+
+
+def test_clear_slot_session_image_delegates(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "clear_slot_session_image")
+    with _bearer("eyJ.fake.jwt"):
+        fn(slot="tank-operator-slot-2")
+    client.clear_session_image_override.assert_called_once_with(
+        "eyJ.fake.jwt", slot="tank-operator-slot-2",
+    )
+
+
+def test_point_slot_session_image_raises_without_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "point_slot_session_image")
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn(slot="tank-operator-slot-2", codex_image="x")
