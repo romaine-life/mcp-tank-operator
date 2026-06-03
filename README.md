@@ -26,6 +26,9 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
 - `get_session_url(session_id)` — tank UI URL for an existing session; accepts either an id or display name.
 - `send_prompt(session_id, prompt, ...)` — fire-and-forget follow-up prompt to an SDK chat session.
 - `spawn_run_session(prompt, mode, ...)` — create a fresh SDK chat session, wait for its pod to become ready, then queue the first prompt.
+- `point_slot_session_image(slot, codex_image, claude_image, git_ref)` — point a Glimmung **test slot** at a branch-built session image so NEWLY-created sessions in that slot boot it (the same image lever production uses, no runtime overlay). Complements Glimmung's `apply_test_slot_hot_swap`, which only patches already-running pods. The image must already exist in ACR (build it via the tank-operator `session-images-build.yml` workflow first); the production scope is refused server-side, so this can only repoint test slots. Targets the slot's own orchestrator (`tank-operator.<slot>.svc`), where the test-env gate is on.
+- `get_slot_session_image(slot)` — report what session image NEW sessions in a test slot will boot (the current override, or `override_set: false`). Read-only.
+- `clear_slot_session_image(slot)` — clear a slot's session-image override; new sessions revert to the chart-pinned image.
 
 ## Auth
 

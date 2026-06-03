@@ -278,3 +278,55 @@ def test_spawn_run_raises_when_spawn_returns_no_id(client: TankClient) -> None:
 def test_spawn_run_times_out_waiting_for_ready_session(client: TankClient) -> None:
     with pytest.raises(TimeoutError, match="session newrun was not ready"):
         client._wait_for_session_ready("jwt", "newrun", timeout_seconds=0.0)
+
+
+# ---------------------------------------------------------------------------
+# session-image override (test-slot repoint) — targets the SLOT orchestrator
+# ---------------------------------------------------------------------------
+
+
+def test_set_session_image_override_puts_to_slot_orchestrator(client: TankClient) -> None:
+    body = {"session_scope": "tank-operator-slot-2", "codex_image": "img"}
+    with patch("httpx.put", return_value=_ok_response(body)) as mock_put:
+        result = client.set_session_image_override(
+            "jwt", "tank-operator-slot-2", codex_image="img", git_ref="feat/x",
+        )
+    assert result == body
+    call = mock_put.call_args
+    # Targets the slot's own orchestrator (namespace == slot name) and the
+    # slot-scoped override path — NOT the configured prod orchestrator URL.
+    assert call.args[0] == (
+        "http://tank-operator.tank-operator-slot-2.svc:80"
+        "/api/internal/session-scopes/tank-operator-slot-2/image-override"
+    )
+    assert call.kwargs["json"] == {"codex_image": "img", "git_ref": "feat/x"}
+    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+
+
+def test_get_session_image_override_returns_unset_on_404(client: TankClient) -> None:
+    with patch("httpx.get", return_value=_resp(404, '{"detail": "no override"}')):
+        result = client.get_session_image_override("jwt", "tank-operator-slot-2")
+    assert result == {"session_scope": "tank-operator-slot-2", "override_set": False}
+
+
+def test_get_session_image_override_returns_value(client: TankClient) -> None:
+    body = {"session_scope": "tank-operator-slot-2", "codex_image": "img"}
+    with patch("httpx.get", return_value=_ok_response(body)):
+        result = client.get_session_image_override("jwt", "tank-operator-slot-2")
+    assert result["codex_image"] == "img"
+    assert result["override_set"] is True
+
+
+def test_clear_session_image_override_deletes(client: TankClient) -> None:
+    with patch("httpx.delete", return_value=_ok_response({"status": "ok", "removed": True})) as mock_del:
+        client.clear_session_image_override("jwt", "tank-operator-slot-2")
+    assert mock_del.call_args.args[0].endswith(
+        "/api/internal/session-scopes/tank-operator-slot-2/image-override"
+    )
+    assert mock_del.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+
+
+def test_slot_override_url_refuses_production_targets(client: TankClient) -> None:
+    for bad in ("default", "tank-operator", "   ", ""):
+        with pytest.raises(ValueError):
+            client._slot_override_url(bad)
