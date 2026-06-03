@@ -33,4 +33,4 @@ Inbound: kube-rbac-proxy validates the calling session pod's projected SA token 
 
 Outbound: every tool authenticates to the orchestrator with the calling pod's auth.romaine.life **service-principal JWT**, forwarded by the pod's mcp-auth-proxy sidecar in the `X-Auth-Romaine-Token` header. mcp-auth-proxy exchanges `/var/run/secrets/auth.romaine.life/token` at `auth.romaine.life/api/auth/exchange/k8s` for a `role=service` JWT and forwards it; this server extracts it into the `SERVICE_BEARER` ContextVar and passes it as `Authorization: Bearer` on the outbound `/api/internal/sessions/*` call. The orchestrator verifies the JWT and treats its `actor_email` claim as the owner — the MCP server never sees or accepts an owner email.
 
-The pre-#486 IP-tail identity path (`X-Forwarded-For` → `caller_pod_ip` query param) was retired in Stage 4. See [nelsong6/tank-operator#486](https://github.com/nelsong6/tank-operator/issues/486).
+The pre-#486 IP-tail identity path (`X-Forwarded-For` → `caller_pod_ip` query param) was retired in Stage 4. See [romaine-life/tank-operator#486](https://github.com/romaine-life/tank-operator/issues/486).

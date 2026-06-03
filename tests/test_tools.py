@@ -7,7 +7,7 @@ TankClient method. Tests verify:
   - Each tool delegates to the correct TankClient method with the JWT.
   - resolve_session / get_session_url walk the list and raise on missing.
 
-See nelsong6/tank-operator#486 for the rollout that retired the prior
+See romaine-life/tank-operator#486 for the rollout that retired the prior
 IP-tail identity path tested here.
 """
 from __future__ import annotations
@@ -371,7 +371,7 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
             session_id="abc",
             slot_index=2,
             url="https://slot-2",
-            pull_request_url="https://github.com/nelsong6/tank-operator/pull/123",
+            pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
         )
     client.set_test_environment.assert_called_once_with(
         "jwt",
@@ -379,7 +379,7 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
         active=True,
         slot_index=2,
         url="https://slot-2",
-        pull_request_url="https://github.com/nelsong6/tank-operator/pull/123",
+        pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
     )
 
 
@@ -388,11 +388,11 @@ def test_set_pull_request_link_delegates_to_client(mcp_client_pair) -> None:
     client.set_pull_request_link.return_value = {"id": "abc"}
     fn = _get_tool(mcp, "set_pull_request_link")
     with _bearer("jwt"):
-        fn(session_id="abc", url="https://github.com/nelsong6/tank-operator/pull/123")
+        fn(session_id="abc", url="https://github.com/romaine-life/tank-operator/pull/123")
     client.set_pull_request_link.assert_called_once_with(
         "jwt",
         session_id="abc",
-        url="https://github.com/nelsong6/tank-operator/pull/123",
+        url="https://github.com/romaine-life/tank-operator/pull/123",
     )
 
 

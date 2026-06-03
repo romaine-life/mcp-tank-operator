@@ -7,7 +7,7 @@ and threads it through). The orchestrator verifies the JWT, gates on
 ``role=service``, and treats the JWT's ``actor_email`` claim as the
 owner identity. No SA token, no caller_pod_ip query param.
 
-See nelsong6/tank-operator#486 for the cross-repo plan.
+See romaine-life/tank-operator#486 for the cross-repo plan.
 """
 from __future__ import annotations
 

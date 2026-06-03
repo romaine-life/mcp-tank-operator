@@ -10,7 +10,7 @@ Per-caller identity is the auth.romaine.life service-principal JWT
 forwarded by the calling pod's mcp-auth-proxy sidecar in
 ``X-Auth-Romaine-Token``. A Starlette middleware extracts it into the
 ``SERVICE_BEARER`` ContextVar; tool handlers thread it through to
-TankClient. See nelsong6/tank-operator#486 for the rollout that
+TankClient. See romaine-life/tank-operator#486 for the rollout that
 retired the prior IP-tail identity path.
 """
 

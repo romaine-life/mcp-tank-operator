@@ -11,7 +11,7 @@ tool handlers thread it through to TankClient.
 The pre-#486 IP-tail identity path (X-Forwarded-For → caller_pod_ip
 query param → orchestrator-side FindPodByIP) was retired in Stage 4 —
 the orchestrator no longer accepts that shape on ``/api/internal/
-sessions/*``. See nelsong6/tank-operator#486.
+sessions/*``. See romaine-life/tank-operator#486.
 """
 from __future__ import annotations
 

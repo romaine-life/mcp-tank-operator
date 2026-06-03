@@ -3,7 +3,7 @@
 Every method authenticates with an auth.romaine.life service-principal
 JWT (passed as the first arg). Tests patch httpx module-level
 functions so we don't need a real orchestrator. See
-nelsong6/tank-operator#486 for the rollout that retired the prior
+romaine-life/tank-operator#486 for the rollout that retired the prior
 IP-tail + SA-token auth path tested previously.
 """
 from __future__ import annotations
@@ -191,13 +191,13 @@ def test_set_test_environment_sends_post(client: TankClient) -> None:
             session_id="abc",
             slot_index=2,
             url="https://slot-2",
-            pull_request_url="https://github.com/nelsong6/tank-operator/pull/123",
+            pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
         )
     assert mock_post.call_args.kwargs["json"] == {
         "active": True,
         "slot_index": 2,
         "url": "https://slot-2",
-        "pull_request_url": "https://github.com/nelsong6/tank-operator/pull/123",
+        "pull_request_url": "https://github.com/romaine-life/tank-operator/pull/123",
     }
     assert mock_post.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 
@@ -207,11 +207,11 @@ def test_set_pull_request_link_sends_post(client: TankClient) -> None:
         client.set_pull_request_link(
             "jwt",
             session_id="abc",
-            url="https://github.com/nelsong6/tank-operator/pull/123",
+            url="https://github.com/romaine-life/tank-operator/pull/123",
         )
     assert mock_post.call_args.args[0].endswith("/api/internal/sessions/abc/pull-request-link")
     assert mock_post.call_args.kwargs["json"] == {
-        "url": "https://github.com/nelsong6/tank-operator/pull/123",
+        "url": "https://github.com/romaine-life/tank-operator/pull/123",
     }
     assert mock_post.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 

@@ -5,7 +5,7 @@ pod's mcp-auth-proxy sidecar in the X-Auth-Romaine-Token header. We
 bind it into the SERVICE_BEARER ContextVar for the lifetime of the
 request; tools read it via current_service_bearer().
 
-See nelsong6/tank-operator#486 for the rollout that retired the prior
+See romaine-life/tank-operator#486 for the rollout that retired the prior
 IP-tail identity path.
 """
 from __future__ import annotations

@@ -7,7 +7,7 @@ If absent (stdio mode, healthz probe, older mcp-auth-proxy sidecar
 without the injection support), tools raise a clean error rather than
 silently acting as the server's own SA.
 
-See nelsong6/tank-operator#486 for the rollout that retired the prior
+See romaine-life/tank-operator#486 for the rollout that retired the prior
 IP-tail identity path.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ _SERVICE_BEARER_MISSING_MSG = (
     "service-principal authentication required — this tool needs the calling "
     "session pod's mcp-auth-proxy sidecar to forward an auth.romaine.life "
     "service JWT in the X-Auth-Romaine-Token header. See "
-    "https://github.com/nelsong6/tank-operator/issues/486."
+    "https://github.com/romaine-life/tank-operator/issues/486."
 )
 
 _SPIRELENS_CAPABILITY = "spirelens_mcp"
