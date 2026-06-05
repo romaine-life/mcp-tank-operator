@@ -46,12 +46,11 @@ def _service_bearer() -> str:
 
 
 def _session_display_name(session: dict[str, Any]) -> str:
-    # The orchestrator computes the canonical display label
-    # (backend sessionmodel.SessionDisplayName) and ships it on every session
-    # record as `display_name`: the user-set name when present, else a short
-    # id slug. Read it through rather than re-deriving the rule here, so the
-    # MCP read model can never drift from the Tank sidebar / session report.
-    return str(session.get("display_name") or "")
+    # The orchestrator ships a non-null `name` on every session record — the
+    # single canonical title (the user's name, else a server-assigned id slug).
+    # Read it directly; the MCP read model never re-derives a label. (The
+    # transitional `display_name` alias was removed once `name` became non-null.)
+    return str(session.get("name") or "")
 
 
 def _resolve_session_ref(sessions: list[dict[str, Any]], session_ref: str) -> dict[str, Any]:
