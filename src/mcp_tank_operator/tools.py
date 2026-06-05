@@ -422,18 +422,32 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
-    def create_session(mode: str = "claude_gui") -> dict[str, Any]:
+    def create_session(
+        mode: str = "claude_gui",
+        model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Create a new tank-operator session pod owned by the calling user.
 
         `mode` must be one of the supported Tank session modes. Current chat
         modes are claude_gui (default) and codex_gui. Returns the new session's
         id, pod_name, status, mode, and url.
 
+        - `model`/`effort`: session run config, validated server-side. REQUIRED
+          for codex modes — the create is rejected with "model is required for
+          Codex sessions" when omitted. Optional for claude (defaults apply).
+        - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
+          before the agent starts (pod-backed modes like claude_gui / codex_gui
+          only).
+
         Use create_session + send_prompt to hand work to a fresh SDK session
         after the pod is ready. For a combined create-and-queue flow, use
         spawn_run_session instead.
         """
-        return client.create_session(_service_bearer(), mode=mode)
+        return client.create_session(
+            _service_bearer(), mode=mode, model=model, effort=effort, repos=repos,
+        )
 
     @mcp.tool()
     def delete_session(session_id: str) -> dict[str, Any]:
@@ -542,6 +556,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         mode: str = "claude_gui",
         name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
         """Create a fresh SDK chat session and queue the first prompt to it.
@@ -553,8 +569,15 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `prompt`: instructions for the agent (required, non-empty).
         - `mode`: claude_gui (default) or codex_gui.
         - `name`: optional friendly label shown in the tank UI.
-        - `model`, `permission_mode`: forwarded to the SDK turn queue
-          (validated server-side to [A-Za-z0-9._-]{1,64}).
+        - `model`/`effort`: session run config, forwarded to BOTH the
+          session-create and the first turn. REQUIRED for codex modes — the
+          create is rejected with "model is required for Codex sessions" when
+          omitted. Optional for claude (defaults apply). Validated server-side
+          to [A-Za-z0-9._-]{1,64}.
+        - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
+          before the agent starts, so the spawned session boots with its repos
+          already present.
+        - `permission_mode`: forwarded to the SDK turn queue.
 
         Waits for the new session pod to become ready, then queues the
         first turn. Open the returned session URL in Tank to watch progress.
@@ -565,6 +588,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             mode=mode,
             name=name,
             model=model,
+            effort=effort,
+            repos=repos,
             permission_mode=permission_mode,
             # See send_prompt — same flow, only the first turn in the
             # freshly spawned session needs the parent-session avatar.
@@ -578,6 +603,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         mode: str = "claude_gui",
         name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
         """Create a fresh SDK chat session inside a Glimmung test slot.
@@ -591,7 +618,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `prompt`: instructions for the agent (required, non-empty).
         - `mode`: claude_gui (default) or codex_gui.
         - `name`: optional friendly label shown in the slot UI.
-        - `model`, `permission_mode`: forwarded to the SDK turn queue.
+        - `model`/`effort`: session run config, forwarded to BOTH the
+          session-create and the first turn. REQUIRED for codex modes.
+        - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
+          before the agent starts.
+        - `permission_mode`: forwarded to the SDK turn queue.
 
         Returns the slot-created session record plus the queued turn response.
         Open the returned slot URL to validate the run in the test environment.
@@ -603,6 +634,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             mode=mode,
             name=name,
             model=model,
+            effort=effort,
+            repos=repos,
             permission_mode=permission_mode,
             # Same cross-session handoff stamp as spawn_run_session, but scoped
             # to the test slot's orchestrator.

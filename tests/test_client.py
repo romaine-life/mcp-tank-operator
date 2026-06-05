@@ -158,6 +158,36 @@ def test_create_session_sends_post_with_jwt(client: TankClient) -> None:
     assert "params" not in call.kwargs
 
 
+def test_create_session_includes_model_effort_repos(client: TankClient) -> None:
+    # Regression: model/effort/repos must ride the session CREATE. Codex
+    # modes are rejected with "model is required for Codex sessions" when the
+    # create body has no model, and repos must reach the repo-cloner init
+    # container so the pod boots with the selection cloned.
+    session = {"id": "cdx1", "mode": "codex_gui", "status": "Pending"}
+    with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
+        client.create_session(
+            "jwt",
+            mode="codex_gui",
+            model="gpt-5.5",
+            effort="high",
+            repos=["romaine-life/glimmung"],
+        )
+    assert mock_post.call_args.kwargs["json"] == {
+        "mode": "codex_gui",
+        "model": "gpt-5.5",
+        "effort": "high",
+        "repos": ["romaine-life/glimmung"],
+    }
+    assert mock_post.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+
+
+def test_create_session_omits_unset_run_config(client: TankClient) -> None:
+    # A bare claude create stays {"mode": ...} so defaults apply server-side.
+    with patch("httpx.post", return_value=_ok_response({"id": "c"}, status=201)) as mock_post:
+        client.create_session("jwt", mode="claude_gui")
+    assert mock_post.call_args.kwargs["json"] == {"mode": "claude_gui"}
+
+
 # ---------------------------------------------------------------------------
 # delete_session / set_session_name / set_test_environment
 # ---------------------------------------------------------------------------
@@ -267,6 +297,45 @@ def test_spawn_run_uses_spawn_endpoint(client: TankClient) -> None:
 
     assert result["status"] == "queued"
     assert result["session"]["id"] == "child-1"
+
+
+def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> None:
+    # Regression for the node-eviction recovery incident: model/effort/repos
+    # must ride the CREATE body, not only the first turn. A codex session
+    # cannot be created without a model on the create, and repos must reach
+    # the repo-cloner. The model is ALSO forwarded to the first turn so its
+    # run config matches the session's.
+    spawn_resp = _ok_response({"id": "cdx-1", "status": "Pending"}, status=201)
+    list_resp = _ok_response([{"id": "cdx-1", "ready_at": "now", "status": "Active"}])
+    msg_resp = _ok_response({"status": "queued"})
+
+    with (
+        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
+        patch("httpx.get", return_value=list_resp),
+    ):
+        client.spawn_run(
+            "jwt",
+            prompt="hi",
+            mode="codex_gui",
+            name="cdx-1",
+            model="gpt-5.5",
+            effort="high",
+            repos=["romaine-life/tank-operator"],
+        )
+
+    create_call = mock_post.call_args_list[0]
+    assert create_call.args[0].endswith("/api/internal/sessions")
+    assert create_call.kwargs["json"] == {
+        "mode": "codex_gui",
+        "name": "cdx-1",
+        "model": "gpt-5.5",
+        "effort": "high",
+        "repos": ["romaine-life/tank-operator"],
+    }
+
+    msg_call = mock_post.call_args_list[1]
+    assert "/messages" in msg_call.args[0]
+    assert msg_call.kwargs["json"]["model"] == "gpt-5.5"
 
 
 def test_spawn_run_raises_when_spawn_returns_no_id(client: TankClient) -> None:

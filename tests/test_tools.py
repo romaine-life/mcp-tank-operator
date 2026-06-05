@@ -117,8 +117,30 @@ def test_create_session_delegates_to_client(mcp_client_pair) -> None:
     fn = _get_tool(mcp, "create_session")
     with _bearer("eyJ.fake.jwt"):
         result = fn(mode="claude_gui")
-    client.create_session.assert_called_once_with("eyJ.fake.jwt", mode="claude_gui")
+    client.create_session.assert_called_once_with(
+        "eyJ.fake.jwt", mode="claude_gui", model=None, effort=None, repos=None,
+    )
     assert result["id"] == "new123"
+
+
+def test_create_session_forwards_run_config_and_repos(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.create_session.return_value = {"id": "cdx"}
+    fn = _get_tool(mcp, "create_session")
+    with _bearer("jwt"):
+        fn(
+            mode="codex_gui",
+            model="gpt-5.5",
+            effort="high",
+            repos=["romaine-life/glimmung"],
+        )
+    client.create_session.assert_called_once_with(
+        "jwt",
+        mode="codex_gui",
+        model="gpt-5.5",
+        effort="high",
+        repos=["romaine-life/glimmung"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,10 +513,34 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
         mode="claude_gui",
         name="child-1",
         model=None,
+        effort=None,
+        repos=None,
         permission_mode=None,
         origin_session_id=None,
     )
     assert result["status"] == "queued"
+
+
+def test_spawn_run_session_forwards_run_config_and_repos(mcp_client_pair) -> None:
+    # The recovery-incident fix: spawn_run_session must pass model/effort
+    # (required for codex) and repos through to the client so they land on the
+    # session CREATE, not just the first turn.
+    mcp, client = mcp_client_pair
+    client.spawn_run.return_value = {"session": {"id": "cdx"}, "status": "queued"}
+    fn = _get_tool(mcp, "spawn_run_session")
+    with _bearer("jwt"):
+        fn(
+            prompt="resume work",
+            mode="codex_gui",
+            model="gpt-5.5",
+            effort="high",
+            repos=["romaine-life/tank-operator"],
+        )
+    kwargs = client.spawn_run.call_args.kwargs
+    assert kwargs["mode"] == "codex_gui"
+    assert kwargs["model"] == "gpt-5.5"
+    assert kwargs["effort"] == "high"
+    assert kwargs["repos"] == ["romaine-life/tank-operator"]
 
 
 def test_spawn_run_session_raises_without_service_bearer(mcp_client_pair) -> None:
@@ -530,6 +576,8 @@ def test_spawn_test_slot_session_delegates_to_client(mcp_client_pair) -> None:
         mode="claude_gui",
         name="slot validation",
         model=None,
+        effort=None,
+        repos=None,
         permission_mode=None,
         origin_session_id=None,
     )
