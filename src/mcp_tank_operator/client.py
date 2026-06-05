@@ -140,10 +140,32 @@ class TankClient:
         _check(r)
         return r.json()
 
-    def create_session(self, service_jwt: str, mode: str) -> dict[str, Any]:
+    def create_session(
+        self,
+        service_jwt: str,
+        mode: str,
+        model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"mode": mode}
+        # model/effort are the session-owned run config the orchestrator
+        # validates at create time. Codex modes REQUIRE a model here — POST
+        # /api/internal/sessions rejects an empty model for codex with
+        # "model is required for Codex sessions" — so forwarding it on the
+        # create (not just the first turn) is what lets a codex session be
+        # created at all.
+        if model:
+            body["model"] = model
+        if effort:
+            body["effort"] = effort
+        # repos drives the repo-cloner init container so the pod boots with
+        # the "owner/name" selection already cloned into /workspace.
+        if repos:
+            body["repos"] = repos
         r = httpx.post(
             f"{self._url}/api/internal/sessions",
-            json={"mode": mode},
+            json=body,
             headers=self._headers(service_jwt),
             timeout=15.0,
         )
@@ -243,6 +265,8 @@ class TankClient:
         mode: str = "claude_gui",
         name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
     ) -> dict[str, Any]:
@@ -258,6 +282,19 @@ class TankClient:
         body: dict[str, Any] = {"mode": mode}
         if name:
             body["name"] = name
+        # model/effort must ride the CREATE, not just the first turn: POST
+        # /api/internal/sessions rejects an empty model for codex modes, so a
+        # codex session cannot be created without it here. The same model is
+        # also passed to send_message below so the first turn's run config
+        # matches the session's configured model.
+        if model:
+            body["model"] = model
+        if effort:
+            body["effort"] = effort
+        # repos boots the pod with the selection pre-cloned into /workspace
+        # via the repo-cloner init container (no in-session clone needed).
+        if repos:
+            body["repos"] = repos
         # POST /api/internal/sessions — the canonical service-principal
         # session-create endpoint. Accepts inline `name` post-#486. The
         # legacy `/spawn` alias was retired in the API cleanup PR that
@@ -292,6 +329,8 @@ class TankClient:
         mode: str = "claude_gui",
         name: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
+        repos: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
     ) -> dict[str, Any]:
@@ -302,6 +341,8 @@ class TankClient:
             mode=mode,
             name=name,
             model=model,
+            effort=effort,
+            repos=repos,
             permission_mode=permission_mode,
             origin_session_id=origin_session_id,
         )
