@@ -193,8 +193,8 @@ def test_read_transcript_forwards_pagination_args(mcp_client_pair) -> None:
 def test_list_session_refs_returns_names_and_ids(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test", "display_name": "tank test", "pod_name": "session-abc"},
-        {"id": "xyz", "name": None, "display_name": "xyz", "pod_name": "session-xyz"},
+        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
+        {"id": "xyz", "name": "xyz", "pod_name": "session-xyz"},
     ]
     fn = _get_tool(mcp, "list_session_refs")
     with _bearer("jwt"):
@@ -203,23 +203,21 @@ def test_list_session_refs_returns_names_and_ids(mcp_client_pair) -> None:
     assert result[1]["display_name"] == "xyz"
 
 
-def test_list_session_refs_uses_server_display_name(mcp_client_pair) -> None:
-    # The MCP trusts the orchestrator's canonical display_name and does not
-    # re-derive it from name/pod_name — even when the server value differs
-    # from the old local pod-id rule.
+def test_list_session_refs_uses_server_name(mcp_client_pair) -> None:
+    # The MCP uses the server-canonical `name` verbatim and never re-derives a
+    # label from pod_name/id.
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
         {
             "id": "abc",
-            "name": None,
-            "display_name": "server-label",
+            "name": "server-name",
             "pod_name": "session-abcdef123",
         },
     ]
     fn = _get_tool(mcp, "list_session_refs")
     with _bearer("jwt"):
         result = fn()
-    assert result[0]["display_name"] == "server-label"
+    assert result[0]["display_name"] == "server-name"
 
 
 def test_resolve_session_finds_matching_id(mcp_client_pair) -> None:
