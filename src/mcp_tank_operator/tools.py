@@ -45,16 +45,13 @@ def _service_bearer() -> str:
     return jwt
 
 
-def _default_session_name(session: dict[str, Any]) -> str:
-    raw = str(session.get("pod_name") or session.get("id") or "")
-    return raw.removeprefix("session-")[:8]
-
-
 def _session_display_name(session: dict[str, Any]) -> str:
-    name = session.get("name")
-    if isinstance(name, str) and name:
-        return name
-    return _default_session_name(session)
+    # The orchestrator computes the canonical display label
+    # (backend sessionmodel.SessionDisplayName) and ships it on every session
+    # record as `display_name`: the user-set name when present, else a short
+    # id slug. Read it through rather than re-deriving the rule here, so the
+    # MCP read model can never drift from the Tank sidebar / session report.
+    return str(session.get("display_name") or "")
 
 
 def _resolve_session_ref(sessions: list[dict[str, Any]], session_ref: str) -> dict[str, Any]:
