@@ -193,14 +193,33 @@ def test_read_transcript_forwards_pagination_args(mcp_client_pair) -> None:
 def test_list_session_refs_returns_names_and_ids(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test", "pod_name": "session-abc"},
-        {"id": "xyz", "pod_name": "session-xyz"},
+        {"id": "abc", "name": "tank test", "display_name": "tank test", "pod_name": "session-abc"},
+        {"id": "xyz", "name": None, "display_name": "xyz", "pod_name": "session-xyz"},
     ]
     fn = _get_tool(mcp, "list_session_refs")
     with _bearer("jwt"):
         result = fn()
     assert result[0]["display_name"] == "tank test"
     assert result[1]["display_name"] == "xyz"
+
+
+def test_list_session_refs_uses_server_display_name(mcp_client_pair) -> None:
+    # The MCP trusts the orchestrator's canonical display_name and does not
+    # re-derive it from name/pod_name — even when the server value differs
+    # from the old local pod-id rule.
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [
+        {
+            "id": "abc",
+            "name": None,
+            "display_name": "server-label",
+            "pod_name": "session-abcdef123",
+        },
+    ]
+    fn = _get_tool(mcp, "list_session_refs")
+    with _bearer("jwt"):
+        result = fn()
+    assert result[0]["display_name"] == "server-label"
 
 
 def test_resolve_session_finds_matching_id(mcp_client_pair) -> None:
@@ -215,8 +234,8 @@ def test_resolve_session_finds_matching_id(mcp_client_pair) -> None:
 def test_resolve_session_finds_friendly_name(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "tank test"},
-        {"id": "xyz", "name": "other"},
+        {"id": "abc", "name": "tank test", "display_name": "tank test"},
+        {"id": "xyz", "name": "other", "display_name": "other"},
     ]
     fn = _get_tool(mcp, "resolve_session")
     with _bearer("jwt"):
@@ -227,8 +246,8 @@ def test_resolve_session_finds_friendly_name(mcp_client_pair) -> None:
 def test_resolve_session_raises_on_ambiguous_name(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.list_sessions.return_value = [
-        {"id": "abc", "name": "shared"},
-        {"id": "xyz", "name": "shared"},
+        {"id": "abc", "name": "shared", "display_name": "shared"},
+        {"id": "xyz", "name": "shared", "display_name": "shared"},
     ]
     fn = _get_tool(mcp, "resolve_session")
     with _bearer("jwt"):
