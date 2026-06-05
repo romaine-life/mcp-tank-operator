@@ -281,6 +281,51 @@ def test_spawn_run_times_out_waiting_for_ready_session(client: TankClient) -> No
 
 
 # ---------------------------------------------------------------------------
+# spawn_test_slot_session — composite against a SLOT orchestrator
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_test_slot_session_uses_slot_orchestrator(client: TankClient) -> None:
+    spawn_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
+    list_resp = _ok_response([{"id": "slot-child", "ready_at": "now", "status": "Active"}])
+    msg_resp = _ok_response({"status": "queued"})
+
+    with (
+        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
+        patch("httpx.get", return_value=list_resp),
+    ):
+        result = client.spawn_test_slot_session(
+            "jwt",
+            slot_name="tank-operator-slot-2",
+            prompt="validate",
+            mode="claude_gui",
+            name="slot validation",
+        )
+
+    spawn_call = mock_post.call_args_list[0]
+    assert spawn_call.args[0] == (
+        "http://tank-operator.tank-operator-slot-2.svc:80/api/internal/sessions"
+    )
+    assert spawn_call.kwargs["json"] == {
+        "mode": "claude_gui",
+        "name": "slot validation",
+    }
+
+    msg_call = mock_post.call_args_list[1]
+    assert msg_call.args[0] == (
+        "http://tank-operator.tank-operator-slot-2.svc:80"
+        "/api/internal/sessions/slot-child/messages"
+    )
+    assert result["session"]["id"] == "slot-child"
+
+
+def test_spawn_test_slot_session_refuses_production_targets(client: TankClient) -> None:
+    for bad in ("default", "tank-operator", "https://tank.romaine.life", "slot/../../x"):
+        with pytest.raises(ValueError):
+            client.spawn_test_slot_session("jwt", slot_name=bad, prompt="validate")
+
+
+# ---------------------------------------------------------------------------
 # session-image override (test-slot repoint) — targets the SLOT orchestrator
 # ---------------------------------------------------------------------------
 
@@ -326,7 +371,7 @@ def test_clear_session_image_override_deletes(client: TankClient) -> None:
     assert mock_del.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 
 
-def test_slot_override_url_refuses_production_targets(client: TankClient) -> None:
-    for bad in ("default", "tank-operator", "   ", ""):
+def test_slot_orchestrator_url_refuses_production_targets(client: TankClient) -> None:
+    for bad in ("default", "tank-operator", "   ", "", "https://tank.romaine.life", "slot/../../x"):
         with pytest.raises(ValueError):
-            client._slot_override_url(bad)
+            client._slot_orchestrator_url(bad)

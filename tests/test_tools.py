@@ -506,6 +506,57 @@ def test_spawn_run_session_raises_without_service_bearer(mcp_client_pair) -> Non
 
 
 # ---------------------------------------------------------------------------
+# spawn_test_slot_session
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_test_slot_session_delegates_to_client(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.spawn_test_slot_session.return_value = {
+        "session": {"id": "slot-child"},
+        "status": "queued",
+    }
+    fn = _get_tool(mcp, "spawn_test_slot_session")
+    with _bearer("eyJ.fake.jwt"):
+        result = fn(
+            slot_name="tank-operator-slot-2",
+            prompt="validate issue",
+            name="slot validation",
+        )
+    client.spawn_test_slot_session.assert_called_once_with(
+        "eyJ.fake.jwt",
+        slot_name="tank-operator-slot-2",
+        prompt="validate issue",
+        mode="claude_gui",
+        name="slot validation",
+        model=None,
+        permission_mode=None,
+        origin_session_id=None,
+    )
+    assert result["status"] == "queued"
+
+
+def test_spawn_test_slot_session_forwards_origin_session_id(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.spawn_test_slot_session.return_value = {
+        "session": {"id": "slot-child"},
+        "status": "queued",
+    }
+    fn = _get_tool(mcp, "spawn_test_slot_session")
+    with _bearer("jwt"), _origin("42"):
+        fn(slot_name="tank-operator-slot-2", prompt="validate issue")
+    assert client.spawn_test_slot_session.call_args.kwargs["origin_session_id"] == "42"
+
+
+def test_spawn_test_slot_session_raises_without_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "spawn_test_slot_session")
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn(slot_name="tank-operator-slot-2", prompt="anything")
+
+
+# ---------------------------------------------------------------------------
 # session-image override repoint tools
 # ---------------------------------------------------------------------------
 

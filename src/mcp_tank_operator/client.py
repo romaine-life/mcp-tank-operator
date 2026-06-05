@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -28,6 +29,7 @@ ORCHESTRATOR_URL = os.environ.get(
 _ERROR_BODY_CAP = 1200
 _SPAWN_READY_TIMEOUT_SECONDS = 120.0
 _SPAWN_READY_POLL_SECONDS = 2.0
+_SLOT_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def _check(r: httpx.Response) -> None:
@@ -282,6 +284,28 @@ class TankClient:
         )
         return {"status": "queued", "session": session, "message": message}
 
+    def spawn_test_slot_session(
+        self,
+        service_jwt: str,
+        slot_name: str,
+        prompt: str,
+        mode: str = "claude_gui",
+        name: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+        origin_session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create and prompt an SDK chat session through a test slot's orchestrator."""
+        return TankClient(orchestrator_url=self._slot_orchestrator_url(slot_name)).spawn_run(
+            service_jwt,
+            prompt=prompt,
+            mode=mode,
+            name=name,
+            model=model,
+            permission_mode=permission_mode,
+            origin_session_id=origin_session_id,
+        )
+
     def _wait_for_session_ready(
         self,
         service_jwt: str,
@@ -313,7 +337,7 @@ class TankClient:
     # test-env gate (slots) and refuses the production `default` scope, so this
     # surface cannot repoint production sessions even if misused.
 
-    def _slot_override_url(self, slot: str) -> str:
+    def _slot_orchestrator_url(self, slot: str) -> str:
         name = slot.strip()
         if not name:
             raise ValueError(
@@ -324,8 +348,17 @@ class TankClient:
                 f"refusing to target the production orchestrator/scope ({name!r}); "
                 "pass a test-slot name like 'tank-operator-slot-2'"
             )
+        if not _SLOT_NAME_RE.fullmatch(name):
+            raise ValueError(
+                f"invalid slot name {slot!r}; pass a Kubernetes namespace-style "
+                "test-slot name like 'tank-operator-slot-2'"
+            )
+        return f"http://tank-operator.{name}.svc:80"
+
+    def _slot_override_url(self, slot: str) -> str:
+        name = slot.strip()
         return (
-            f"http://tank-operator.{name}.svc:80"
+            f"{self._slot_orchestrator_url(name)}"
             f"/api/internal/session-scopes/{name}/image-override"
         )
 

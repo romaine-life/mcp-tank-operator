@@ -572,6 +572,44 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
+    def spawn_test_slot_session(
+        slot_name: str,
+        prompt: str,
+        mode: str = "claude_gui",
+        name: str | None = None,
+        model: str | None = None,
+        permission_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a fresh SDK chat session inside a Glimmung test slot.
+
+        Use this during Tank test-slot validation when the new session must be
+        created by the slot's own orchestrator, not production/default Tank.
+        `slot_name` is the Glimmung slot namespace, for example
+        "tank-operator-slot-2"; production-ish targets such as "default" are
+        refused by the client before any HTTP request is made.
+
+        - `prompt`: instructions for the agent (required, non-empty).
+        - `mode`: claude_gui (default) or codex_gui.
+        - `name`: optional friendly label shown in the slot UI.
+        - `model`, `permission_mode`: forwarded to the SDK turn queue.
+
+        Returns the slot-created session record plus the queued turn response.
+        Open the returned slot URL to validate the run in the test environment.
+        """
+        return client.spawn_test_slot_session(
+            _service_bearer(),
+            slot_name=slot_name,
+            prompt=prompt,
+            mode=mode,
+            name=name,
+            model=model,
+            permission_mode=permission_mode,
+            # Same cross-session handoff stamp as spawn_run_session, but scoped
+            # to the test slot's orchestrator.
+            origin_session_id=current_origin_session_id(),
+        )
+
+    @mcp.tool()
     def point_slot_session_image(
         slot: str,
         codex_image: str | None = None,
