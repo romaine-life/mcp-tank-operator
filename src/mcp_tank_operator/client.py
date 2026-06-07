@@ -86,6 +86,15 @@ class TankClient:
         _check(r)
         return r.json()
 
+    def get_session_run_options(self, service_jwt: str) -> dict[str, Any]:
+        r = httpx.get(
+            f"{self._url}/api/internal/session-run-options",
+            headers=self._headers(service_jwt),
+            timeout=15.0,
+        )
+        _check(r)
+        return r.json()
+
     def get_session_capabilities(self, service_jwt: str, session_id: str) -> dict[str, Any]:
         """Return the skills and MCP surface visible inside a session pod."""
         r = httpx.get(
@@ -149,12 +158,9 @@ class TankClient:
         repos: list[str] | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"mode": mode}
-        # model/effort are the session-owned run config the orchestrator
-        # validates at create time. Codex modes REQUIRE a model here — POST
-        # /api/internal/sessions rejects an empty model for codex with
-        # "model is required for Codex sessions" — so forwarding it on the
-        # create (not just the first turn) is what lets a codex session be
-        # created at all.
+        # model/effort are session-owned run config. Tank validates them
+        # server-side against provider-supported values and returns the chosen
+        # config in the session row so the UI can show it immediately.
         if model:
             body["model"] = model
         if effort:
@@ -282,11 +288,10 @@ class TankClient:
         body: dict[str, Any] = {"mode": mode}
         if name:
             body["name"] = name
-        # model/effort must ride the CREATE, not just the first turn: POST
-        # /api/internal/sessions rejects an empty model for codex modes, so a
-        # codex session cannot be created without it here. The same model is
-        # also passed to send_message below so the first turn's run config
-        # matches the session's configured model.
+        # model/effort ride the CREATE, not just the first turn, so the
+        # session row records the chosen config before the runner starts. The
+        # model is also passed to the first turn so older sessions without a
+        # durable run config still match.
         if model:
             body["model"] = model
         if effort:

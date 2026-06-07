@@ -64,9 +64,14 @@ def _origin(session_id: str | None):
 
 def _get_tool(mcp: FastMCP, name: str):
     """Retrieve the raw callable for a registered tool by name."""
+    return _get_tool_object(mcp, name).fn
+
+
+def _get_tool_object(mcp: FastMCP, name: str):
+    """Retrieve the registered FastMCP tool object by name."""
     for tool in mcp._tool_manager._tools.values():
         if tool.name == name:
-            return tool.fn
+            return tool
     raise KeyError(f"tool {name!r} not registered")
 
 
@@ -106,6 +111,27 @@ def test_list_sessions_delegates_to_client(mcp_client_pair) -> None:
     assert result == [{"id": "abc"}]
 
 
+def test_get_session_run_options_delegates_to_client(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.get_session_run_options.return_value = {
+        "create_modes": ["claude_gui", "codex_gui"],
+        "models": {"codex": ["gpt-5.5"]},
+    }
+    fn = _get_tool(mcp, "get_session_run_options")
+    with _bearer("jwt"):
+        result = fn()
+    client.get_session_run_options.assert_called_once_with("jwt")
+    assert result["models"]["codex"] == ["gpt-5.5"]
+
+
+def test_get_session_run_options_raises_without_service_bearer(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    fn = _get_tool(mcp, "get_session_run_options")
+    with _bearer(None):
+        with pytest.raises(ValueError, match="service-principal authentication required"):
+            fn()
+
+
 # ---------------------------------------------------------------------------
 # create_session
 # ---------------------------------------------------------------------------
@@ -141,6 +167,23 @@ def test_create_session_forwards_run_config_and_repos(mcp_client_pair) -> None:
         effort="high",
         repos=["romaine-life/glimmung"],
     )
+
+
+def test_model_and_mode_parameters_defer_validation_to_tank(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    for name in (
+        "create_session",
+        "send_prompt",
+        "spawn_run_session",
+        "spawn_test_slot_session",
+    ):
+        schema = _get_tool_object(mcp, name).parameters["properties"]["model"]
+        string_branch = next(part for part in schema["anyOf"] if part.get("type") == "string")
+        assert "enum" not in string_branch
+    for name in ("create_session", "spawn_run_session", "spawn_test_slot_session"):
+        schema = _get_tool_object(mcp, name).parameters["properties"]["mode"]
+        assert schema["type"] == "string"
+        assert "enum" not in schema
 
 
 # ---------------------------------------------------------------------------
@@ -539,9 +582,8 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
 
 
 def test_spawn_run_session_forwards_run_config_and_repos(mcp_client_pair) -> None:
-    # The recovery-incident fix: spawn_run_session must pass model/effort
-    # (required for codex) and repos through to the client so they land on the
-    # session CREATE, not just the first turn.
+    # Explicit user-requested run config must land on the session CREATE, not
+    # just the first turn.
     mcp, client = mcp_client_pair
     client.spawn_run.return_value = {"session": {"id": "cdx"}, "status": "queued"}
     fn = _get_tool(mcp, "spawn_run_session")

@@ -93,6 +93,18 @@ def test_list_sessions_sends_get_with_jwt_bearer(client: TankClient) -> None:
     assert "internal/sessions" in call.args[0]
 
 
+def test_get_session_run_options_sends_get_with_jwt_bearer(client: TankClient) -> None:
+    body = {"create_modes": ["claude_gui", "codex_gui"], "models": {"codex": ["gpt-5.5"]}}
+    with patch("httpx.get", return_value=_ok_response(body)) as mock_get:
+        result = client.get_session_run_options("jwt")
+
+    assert result == body
+    call = mock_get.call_args
+    assert call.args[0].endswith("/api/internal/session-run-options")
+    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
+    assert call.kwargs["timeout"] == 15.0
+
+
 # ---------------------------------------------------------------------------
 # read_transcript
 # ---------------------------------------------------------------------------
@@ -159,10 +171,8 @@ def test_create_session_sends_post_with_jwt(client: TankClient) -> None:
 
 
 def test_create_session_includes_model_effort_repos(client: TankClient) -> None:
-    # Regression: model/effort/repos must ride the session CREATE. Codex
-    # modes are rejected with "model is required for Codex sessions" when the
-    # create body has no model, and repos must reach the repo-cloner init
-    # container so the pod boots with the selection cloned.
+    # Explicit run config must ride the session CREATE so the row records the
+    # model/effort before the runner starts.
     session = {"id": "cdx1", "mode": "codex_gui", "status": "Pending"}
     with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
         client.create_session(
@@ -300,11 +310,9 @@ def test_spawn_run_uses_spawn_endpoint(client: TankClient) -> None:
 
 
 def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> None:
-    # Regression for the node-eviction recovery incident: model/effort/repos
-    # must ride the CREATE body, not only the first turn. A codex session
-    # cannot be created without a model on the create, and repos must reach
-    # the repo-cloner. The model is ALSO forwarded to the first turn so its
-    # run config matches the session's.
+    # Explicit run config must ride the session CREATE so the row records the
+    # model/effort before the runner starts. The model is ALSO forwarded to the
+    # first turn so older sessions without a durable run config still match.
     spawn_resp = _ok_response({"id": "cdx-1", "status": "Pending"}, status=201)
     list_resp = _ok_response([{"id": "cdx-1", "ready_at": "now", "status": "Active"}])
     msg_resp = _ok_response({"status": "queued"})

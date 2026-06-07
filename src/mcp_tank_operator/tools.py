@@ -239,6 +239,21 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         return client.list_sessions(_service_bearer())
 
     @mcp.tool()
+    def get_session_run_options() -> dict[str, Any]:
+        """Return Tank's current session create/run options.
+
+        Use this before choosing a non-default `mode`, `model`, or `effort`
+        for create_session/spawn_run_session. The data comes from Tank's
+        backend validation contract, not from this MCP server. Tank still
+        validates the eventual create/turn request and returns an actionable
+        error if a value is not accepted.
+
+        Returns create modes, SDK chat modes with providers, retired create
+        modes, provider model lists, provider effort lists, and defaults.
+        """
+        return client.get_session_run_options(_service_bearer())
+
+    @mcp.tool()
     def list_session_refs() -> list[dict[str, Any]]:
         """List the session ids and Tank UI names owned by the caller.
 
@@ -430,9 +445,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         modes are claude_gui (default) and codex_gui. Returns the new session's
         id, pod_name, status, mode, and url.
 
-        - `model`/`effort`: session run config, validated server-side. REQUIRED
-          for codex modes — the create is rejected with "model is required for
-          Codex sessions" when omitted. Optional for claude (defaults apply).
+        - `model`/`effort`: optional session run config. Tank validates these
+          server-side and returns an actionable error when a value is not
+          accepted. Omit these unless the user explicitly asked for a
+          model/effort; Tank returns accepted values in the session row so the
+          UI can show the choice.
         - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
           before the agent starts (pod-backed modes like claude_gui / codex_gui
           only).
@@ -526,8 +543,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         codex_gui. The call is fire-and-forget: returns 202 once the turn has
         been queued for the pod-side SDK runner.
 
-        `model` and `permission_mode` are forwarded to the SDK turn queue;
-        pre-validated server-side to [A-Za-z0-9._-]{1,64}.
+        `model` and `permission_mode` are forwarded to the SDK turn queue.
+        Tank validates `model` server-side and returns an actionable error when
+        it is not accepted; omit it unless the user explicitly asked for a
+        model override.
 
         For a completely fresh session, use spawn_run_session instead.
         """
@@ -565,11 +584,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `prompt`: instructions for the agent (required, non-empty).
         - `mode`: claude_gui (default) or codex_gui.
         - `name`: optional friendly label shown in the tank UI.
-        - `model`/`effort`: session run config, forwarded to BOTH the
-          session-create and the first turn. REQUIRED for codex modes — the
-          create is rejected with "model is required for Codex sessions" when
-          omitted. Optional for claude (defaults apply). Validated server-side
-          to [A-Za-z0-9._-]{1,64}.
+        - `model`/`effort`: optional session run config, forwarded to BOTH
+          session-create and the first turn. Tank validates these server-side
+          and returns an actionable error when a value is not accepted. Omit
+          them unless the user explicitly asked for a model/effort.
         - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
           before the agent starts, so the spawned session boots with its repos
           already present.
@@ -614,8 +632,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `prompt`: instructions for the agent (required, non-empty).
         - `mode`: claude_gui (default) or codex_gui.
         - `name`: optional friendly label shown in the slot UI.
-        - `model`/`effort`: session run config, forwarded to BOTH the
-          session-create and the first turn. REQUIRED for codex modes.
+        - `model`/`effort`: optional session run config, forwarded to BOTH
+          session-create and the first turn. Tank validates these server-side
+          and returns an actionable error when a value is not accepted. Omit
+          them unless the user explicitly asked for a model/effort.
         - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
           before the agent starts.
         - `permission_mode`: forwarded to the SDK turn queue.
