@@ -28,6 +28,12 @@ from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from .caller import (
+    CALLER_KIND_HEADER,
+    CALLER_SESSION_ID,
+    CALLER_SESSION_ID_HEADER,
+    CALLER_SESSION_SCOPE,
+    CALLER_SESSION_SCOPE_HEADER,
+    CALLER_SYSTEM_HEADER,
     ORIGIN_SESSION_HEADER,
     ORIGIN_SESSION_ID,
     SERVICE_BEARER,
@@ -51,11 +57,26 @@ class CallerIdentityMiddleware(BaseHTTPMiddleware):
         origin = request.headers.get(ORIGIN_SESSION_HEADER)
         if origin is not None:
             origin = origin.strip() or None
+        caller_system = (request.headers.get(CALLER_SYSTEM_HEADER) or "").strip()
+        caller_kind = (request.headers.get(CALLER_KIND_HEADER) or "").strip()
+        caller_session_id = None
+        caller_session_scope = None
+        if caller_system == "tank-operator" and caller_kind == "session":
+            caller_session_id = (
+                request.headers.get(CALLER_SESSION_ID_HEADER) or ""
+            ).strip() or None
+            caller_session_scope = (
+                request.headers.get(CALLER_SESSION_SCOPE_HEADER) or ""
+            ).strip() or None
         token = SERVICE_BEARER.set(bearer)
         origin_token = ORIGIN_SESSION_ID.set(origin)
+        caller_session_token = CALLER_SESSION_ID.set(caller_session_id)
+        caller_scope_token = CALLER_SESSION_SCOPE.set(caller_session_scope)
         try:
             return await call_next(request)
         finally:
+            CALLER_SESSION_SCOPE.reset(caller_scope_token)
+            CALLER_SESSION_ID.reset(caller_session_token)
             ORIGIN_SESSION_ID.reset(origin_token)
             SERVICE_BEARER.reset(token)
 

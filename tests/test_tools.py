@@ -23,7 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-from mcp_tank_operator.caller import ORIGIN_SESSION_ID, SERVICE_BEARER  # noqa: E402
+from mcp_tank_operator.caller import (  # noqa: E402
+    CALLER_SESSION_ID,
+    ORIGIN_SESSION_ID,
+    SERVICE_BEARER,
+)
 from mcp_tank_operator.tools import register_tools  # noqa: E402
 
 
@@ -60,6 +64,16 @@ def _origin(session_id: str | None):
         yield
     finally:
         ORIGIN_SESSION_ID.reset(token)
+
+
+@contextlib.contextmanager
+def _caller_session(session_id: str | None):
+    """Bind the trusted current-session identity for workflow tools."""
+    token = CALLER_SESSION_ID.set(session_id)
+    try:
+        yield
+    finally:
+        CALLER_SESSION_ID.reset(token)
 
 
 def _get_tool(mcp: FastMCP, name: str):
@@ -448,9 +462,8 @@ def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.set_test_environment.return_value = {"id": "abc"}
     fn = _get_tool(mcp, "set_test_environment")
-    with _bearer("jwt"):
+    with _bearer("jwt"), _caller_session("abc"):
         fn(
-            session_id="abc",
             slot_index=2,
             url="https://slot-2",
             pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
@@ -469,13 +482,19 @@ def test_set_pull_request_link_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.set_pull_request_link.return_value = {"id": "abc"}
     fn = _get_tool(mcp, "set_pull_request_link")
-    with _bearer("jwt"):
-        fn(session_id="abc", url="https://github.com/romaine-life/tank-operator/pull/123")
+    with _bearer("jwt"), _caller_session("abc"):
+        fn(url="https://github.com/romaine-life/tank-operator/pull/123")
     client.set_pull_request_link.assert_called_once_with(
         "jwt",
         session_id="abc",
         url="https://github.com/romaine-life/tank-operator/pull/123",
     )
+
+
+def test_workflow_tools_do_not_accept_manual_session_id(mcp_client_pair) -> None:
+    mcp, _client = mcp_client_pair
+    assert "session_id" not in _get_tool_object(mcp, "set_test_environment").parameters["properties"]
+    assert "session_id" not in _get_tool_object(mcp, "set_pull_request_link").parameters["properties"]
 
 
 # ---------------------------------------------------------------------------
