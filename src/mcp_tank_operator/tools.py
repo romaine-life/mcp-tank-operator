@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .caller import current_origin_session_id, current_service_bearer
+from .caller import current_caller_session_id, current_origin_session_id, current_service_bearer
 from .client import TankClient
 
 _SERVICE_BEARER_MISSING_MSG = (
@@ -114,14 +114,24 @@ def _target_session_id(client: TankClient, bearer: str, session_ref: str | None)
             raise ValueError(f"session {session_ref!r} resolved without an id")
         return session_id
 
-    origin_session_id = (current_origin_session_id() or "").strip()
-    if origin_session_id:
-        return origin_session_id
+    caller_session_id = (current_caller_session_id() or "").strip()
+    if caller_session_id:
+        return caller_session_id
 
     raise ValueError(
         "session_id is required because the calling pod did not provide "
-        "X-Tank-Origin-Session-Id; pass the current session id or Tank display name"
+        "trusted current-session identity; pass a Tank display name or id"
     )
+
+
+def _current_session_id() -> str:
+    session_id = (current_caller_session_id() or "").strip()
+    if not session_id:
+        raise ValueError(
+            "current session identity is required; mcp-auth-proxy must forward "
+            "caller context or an auth.romaine.life service token with sub=svc:tank:<id>"
+        )
+    return session_id
 
 
 def _spirelens_static_context() -> dict[str, Any]:
@@ -483,13 +493,12 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
 
     @mcp.tool()
     def set_test_environment(
-        session_id: str,
         slot_index: int | None = None,
         url: str | None = None,
         pull_request_url: str | None = None,
         active: bool = True,
     ) -> dict[str, Any]:
-        """Update Tank's GUI test pill for a caller-owned session.
+        """Update the calling session's GUI test pill.
 
         Call this after reserving a Glimmung test slot so the Tank UI can show
         the beaker pill as active, display the slot number, and link to the
@@ -497,7 +506,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         """
         return client.set_test_environment(
             _service_bearer(),
-            session_id=session_id,
+            session_id=_current_session_id(),
             active=active,
             slot_index=slot_index,
             url=url,
@@ -505,8 +514,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
-    def set_pull_request_link(session_id: str, url: str | None) -> dict[str, Any]:
-        """Update Tank's GUI pull request link for a caller-owned test workflow.
+    def set_pull_request_link(url: str | None) -> dict[str, Any]:
+        """Update the calling session's GUI pull request link.
 
         Call this after opening the draft PR for a test workflow. The Tank UI
         shows a pull-request icon linking to the PR without changing the
@@ -515,7 +524,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         """
         return client.set_pull_request_link(
             _service_bearer(),
-            session_id=session_id,
+            session_id=_current_session_id(),
             url=url,
         )
 
