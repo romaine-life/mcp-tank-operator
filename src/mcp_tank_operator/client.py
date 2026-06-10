@@ -415,6 +415,7 @@ class TankClient:
         *,
         codex_image: str | None = None,
         claude_image: str | None = None,
+        antigravity_image: str | None = None,
         git_ref: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {}
@@ -422,6 +423,8 @@ class TankClient:
             body["codex_image"] = codex_image
         if claude_image:
             body["claude_image"] = claude_image
+        if antigravity_image:
+            body["antigravity_image"] = antigravity_image
         if git_ref:
             body["git_ref"] = git_ref
         r = httpx.put(

@@ -701,7 +701,27 @@ def test_point_slot_session_image_delegates(mcp_client_pair) -> None:
         slot="tank-operator-slot-2",
         codex_image="romainecr.azurecr.io/codex-container:codex-xyz",
         claude_image=None,
+        antigravity_image=None,
         git_ref="feat/x",
+    )
+
+
+def test_point_slot_session_image_delegates_antigravity(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    fn = _get_tool(mcp, "point_slot_session_image")
+    with _bearer("eyJ.fake.jwt"):
+        fn(
+            slot="tank-operator-slot-2",
+            antigravity_image="romainecr.azurecr.io/antigravity-container:antigravity-xyz",
+            git_ref="feat/agy",
+        )
+    client.set_session_image_override.assert_called_once_with(
+        "eyJ.fake.jwt",
+        slot="tank-operator-slot-2",
+        codex_image=None,
+        claude_image=None,
+        antigravity_image="romainecr.azurecr.io/antigravity-container:antigravity-xyz",
+        git_ref="feat/agy",
     )
 
 

@@ -425,6 +425,22 @@ def test_set_session_image_override_puts_to_slot_orchestrator(client: TankClient
     assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 
 
+def test_set_session_image_override_forwards_antigravity_image(client: TankClient) -> None:
+    body = {"session_scope": "tank-operator-slot-2", "antigravity_image": "agy-img"}
+    with patch("httpx.put", return_value=_ok_response(body)) as mock_put:
+        result = client.set_session_image_override(
+            "jwt", "tank-operator-slot-2", antigravity_image="agy-img", git_ref="feat/agy",
+        )
+    assert result == body
+    call = mock_put.call_args
+    assert call.args[0] == (
+        "http://tank-operator.tank-operator-slot-2.svc:80"
+        "/api/internal/session-scopes/tank-operator-slot-2/image-override"
+    )
+    # Only the antigravity image (+ git_ref) ride the body — unset providers omitted.
+    assert call.kwargs["json"] == {"antigravity_image": "agy-img", "git_ref": "feat/agy"}
+
+
 def test_get_session_image_override_returns_unset_on_404(client: TankClient) -> None:
     with patch("httpx.get", return_value=_resp(404, '{"detail": "no override"}')):
         result = client.get_session_image_override("jwt", "tank-operator-slot-2")

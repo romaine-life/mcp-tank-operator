@@ -672,6 +672,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         slot: str,
         codex_image: str | None = None,
         claude_image: str | None = None,
+        antigravity_image: str | None = None,
         git_ref: str | None = None,
     ) -> dict[str, Any]:
         """Point a Glimmung test slot's session image at a branch-built image so
@@ -682,6 +683,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         now on — the same image lever production uses, no runtime overlay.
         Glimmung's `apply_test_slot_hot_swap` patches ALREADY-running pods; this
         complements it for the pods you haven't created yet.
+
+        Covers all three session-runner providers. Antigravity is the path with
+        no running-pod hot-swap (the Go antigravity-runner is not wired into
+        `apply_test_slot_hot_swap`), so this repoint + a fresh slot session is
+        the supported way to validate an antigravity-container branch on a slot.
 
         Prerequisites:
           - The image must already exist in ACR. This tool does NOT build images:
@@ -695,24 +701,34 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
           - `slot`: the test-slot name.
           - `codex_image`: full image ref for codex sessions, e.g.
             "romainecr.azurecr.io/codex-container:codex-<fingerprint>".
-          - `claude_image`: full image ref for claude sessions.
+          - `claude_image`: full image ref for claude sessions, e.g.
+            "romainecr.azurecr.io/claude-container:claude-<fingerprint>".
+          - `antigravity_image`: full image ref for antigravity sessions, e.g.
+            "romainecr.azurecr.io/antigravity-container:antigravity-<fingerprint>".
           - `git_ref`: optional provenance label stored with the override.
 
-        At least one of `codex_image` / `claude_image` is required. The
-        production scope is refused server-side and only test-env orchestrators
-        honor the override, so this cannot repoint production sessions. Use
-        `get_slot_session_image` to see what new sessions will inherit and
-        `clear_slot_session_image` to revert to the chart-pinned image.
+        At least one of `codex_image` / `claude_image` / `antigravity_image` is
+        required; you may set several at once to repoint multiple providers in
+        one call. The production scope is refused server-side and only test-env
+        orchestrators honor the override, so this cannot repoint production
+        sessions. Use `get_slot_session_image` to see what new sessions will
+        inherit and `clear_slot_session_image` to revert to the chart-pinned
+        image.
         """
         has_codex = bool(codex_image and codex_image.strip())
         has_claude = bool(claude_image and claude_image.strip())
-        if not (has_codex or has_claude):
-            raise ValueError("at least one of codex_image / claude_image is required")
+        has_antigravity = bool(antigravity_image and antigravity_image.strip())
+        if not (has_codex or has_claude or has_antigravity):
+            raise ValueError(
+                "at least one of codex_image / claude_image / antigravity_image "
+                "is required"
+            )
         return client.set_session_image_override(
             _service_bearer(),
             slot=slot,
             codex_image=codex_image,
             claude_image=claude_image,
+            antigravity_image=antigravity_image,
             git_ref=git_ref,
         )
 
@@ -722,7 +738,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         answer to "what image will NEW sessions in this slot boot?".
 
         Returns the stored override (`session_scope`, `claude_image`,
-        `codex_image`, `git_ref`, `set_by`, `set_at`) or
+        `codex_image`, `antigravity_image`, `git_ref`, `set_by`, `set_at`) or
         `{"override_set": false}` when none is set (new sessions then boot the
         slot's chart-pinned image). Read-only.
         """
