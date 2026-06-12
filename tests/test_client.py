@@ -388,6 +388,40 @@ def test_spawn_test_slot_session_uses_slot_orchestrator(client: TankClient) -> N
         "name": "slot validation",
     }
 
+
+def test_spawn_test_slot_session_uses_tank_test_slot_defaults(client: TankClient) -> None:
+    opts_resp = _ok_response(
+        {
+            "test_slot_defaults": {
+                "mode": "codex_gui",
+                "model": "gpt-5.4-mini",
+                "effort": "low",
+            }
+        }
+    )
+    spawn_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
+    list_resp = _ok_response([{"id": "slot-child", "ready_at": "now", "status": "Active"}])
+    msg_resp = _ok_response({"status": "queued"})
+
+    with (
+        patch("httpx.get", side_effect=[opts_resp, list_resp]),
+        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
+    ):
+        result = client.spawn_test_slot_session(
+            "jwt",
+            slot_name="tank-operator-slot-2",
+            prompt="validate",
+            name="slot validation",
+        )
+
+    spawn_call = mock_post.call_args_list[0]
+    assert spawn_call.kwargs["json"] == {
+        "mode": "codex_gui",
+        "model": "gpt-5.4-mini",
+        "effort": "low",
+        "name": "slot validation",
+    }
+
     msg_call = mock_post.call_args_list[1]
     assert msg_call.args[0] == (
         "http://tank-operator.tank-operator-slot-2.svc:80"

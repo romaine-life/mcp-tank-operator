@@ -623,7 +623,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
     def spawn_test_slot_session(
         slot_name: str,
         prompt: str,
-        mode: str = "claude_gui",
+        mode: str | None = None,
         name: str | None = None,
         model: str | None = None,
         effort: str | None = None,
@@ -639,7 +639,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         refused by the client before any HTTP request is made.
 
         - `prompt`: instructions for the agent (required, non-empty).
-        - `mode`: claude_gui (default) or codex_gui.
+        - `mode`: optional explicit mode. When omitted, the slot uses Tank's
+          admin-configured test-slot default from `get_session_run_options()`.
         - `name`: optional friendly label shown in the slot UI.
         - `model`/`effort`: optional session run config, forwarded to BOTH
           session-create and the first turn. Tank validates these server-side

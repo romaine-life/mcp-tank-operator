@@ -47,6 +47,19 @@ def _check(r: httpx.Response) -> None:
     )
 
 
+def _test_slot_session_defaults(run_options: dict[str, Any]) -> dict[str, str]:
+    raw = run_options.get("test_slot_defaults")
+    defaults = raw if isinstance(raw, dict) else {}
+    mode = defaults.get("mode")
+    model = defaults.get("model")
+    effort = defaults.get("effort")
+    return {
+        "mode": mode if isinstance(mode, str) and mode else "claude_gui",
+        "model": model if isinstance(model, str) else "",
+        "effort": effort if isinstance(effort, str) else "",
+    }
+
+
 class TankClient:
     """Wraps /api/internal/sessions/* calls with service-principal JWT auth.
 
@@ -268,7 +281,7 @@ class TankClient:
         self,
         service_jwt: str,
         prompt: str,
-        mode: str = "claude_gui",
+        mode: str | None = "claude_gui",
         name: str | None = None,
         model: str | None = None,
         effort: str | None = None,
@@ -285,7 +298,9 @@ class TankClient:
         making it visually obvious that the prompt came from another
         agent rather than the human owner.
         """
-        body: dict[str, Any] = {"mode": mode}
+        body: dict[str, Any] = {}
+        if mode:
+            body["mode"] = mode
         if name:
             body["name"] = name
         # model/effort ride the CREATE, not just the first turn, so the
@@ -331,7 +346,7 @@ class TankClient:
         service_jwt: str,
         slot_name: str,
         prompt: str,
-        mode: str = "claude_gui",
+        mode: str | None = None,
         name: str | None = None,
         model: str | None = None,
         effort: str | None = None,
@@ -340,7 +355,13 @@ class TankClient:
         origin_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Create and prompt an SDK chat session through a test slot's orchestrator."""
-        return TankClient(orchestrator_url=self._slot_orchestrator_url(slot_name)).spawn_run(
+        slot_client = TankClient(orchestrator_url=self._slot_orchestrator_url(slot_name))
+        if mode is None and model is None and effort is None:
+            defaults = _test_slot_session_defaults(slot_client.get_session_run_options(service_jwt))
+            mode = defaults.get("mode")
+            model = defaults.get("model") or None
+            effort = defaults.get("effort") or None
+        return slot_client.spawn_run(
             service_jwt,
             prompt=prompt,
             mode=mode,
