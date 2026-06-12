@@ -50,6 +50,22 @@ def _service_bearer() -> str:
     return jwt
 
 
+def _origin_session_context(client: TankClient, service_bearer: str) -> tuple[str | None, str | None]:
+    origin_session_id = current_origin_session_id()
+    origin_avatar_id = current_origin_session_avatar_id()
+    if origin_avatar_id or not origin_session_id:
+        return origin_session_id, origin_avatar_id
+    try:
+        sessions = client.list_sessions(service_bearer)
+    except Exception:
+        return origin_session_id, None
+    for session in sessions:
+        if str(session.get("id") or "").strip() == origin_session_id:
+            avatar_id = str(session.get("agent_avatar_id") or "").strip()
+            return origin_session_id, avatar_id or None
+    return origin_session_id, None
+
+
 def _session_display_name(session: dict[str, Any]) -> str:
     # The orchestrator ships a non-null `name` on every session record — the
     # single canonical title (the user's name, else a server-assigned id slug).
@@ -564,8 +580,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
 
         For a completely fresh session, use spawn_run_session instead.
         """
+        service_bearer = _service_bearer()
+        origin_session_id, origin_session_avatar_id = _origin_session_context(client, service_bearer)
         return client.send_message(
-            _service_bearer(),
+            service_bearer,
             session_id=session_id,
             prompt=prompt,
             model=model,
@@ -576,8 +594,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             # session's avatar on the user bubble in the target session
             # — the handoff reads as agent-authored rather than as the
             # human owner typing it themselves.
-            origin_session_id=current_origin_session_id(),
-            origin_session_avatar_id=current_origin_session_avatar_id(),
+            origin_session_id=origin_session_id,
+            origin_session_avatar_id=origin_session_avatar_id,
         )
 
     @mcp.tool()
@@ -611,8 +629,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         Waits for the new session pod to become ready, then queues the
         first turn. Open the returned session URL in Tank to watch progress.
         """
+        service_bearer = _service_bearer()
+        origin_session_id, origin_session_avatar_id = _origin_session_context(client, service_bearer)
         return client.spawn_run(
-            _service_bearer(),
+            service_bearer,
             prompt=prompt,
             mode=mode,
             name=name,
@@ -622,8 +642,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             permission_mode=permission_mode,
             # See send_prompt — same flow, only the first turn in the
             # freshly spawned session needs the parent-session avatar.
-            origin_session_id=current_origin_session_id(),
-            origin_session_avatar_id=current_origin_session_avatar_id(),
+            origin_session_id=origin_session_id,
+            origin_session_avatar_id=origin_session_avatar_id,
         )
 
     @mcp.tool()
@@ -660,8 +680,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         Returns the slot-created session record plus the queued turn response.
         Open the returned slot URL to validate the run in the test environment.
         """
+        service_bearer = _service_bearer()
+        origin_session_id, origin_session_avatar_id = _origin_session_context(client, service_bearer)
         return client.spawn_test_slot_session(
-            _service_bearer(),
+            service_bearer,
             slot_name=slot_name,
             prompt=prompt,
             mode=mode,
@@ -672,8 +694,8 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             permission_mode=permission_mode,
             # Same cross-session handoff stamp as spawn_run_session, but scoped
             # to the test slot's orchestrator.
-            origin_session_id=current_origin_session_id(),
-            origin_session_avatar_id=current_origin_session_avatar_id(),
+            origin_session_id=origin_session_id,
+            origin_session_avatar_id=origin_session_avatar_id,
         )
 
     @mcp.tool()
