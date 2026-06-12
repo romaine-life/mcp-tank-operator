@@ -274,6 +274,23 @@ def test_send_message_includes_optional_model(client: TankClient) -> None:
     # If we get here without error, the optional was passed through.
 
 
+def test_send_message_forwards_origin_session_avatar_header(client: TankClient) -> None:
+    with patch("httpx.post", return_value=_ok_response({"status": "queued"})) as mock_post:
+        client.send_message(
+            "jwt",
+            session_id="abc",
+            prompt="hi",
+            origin_session_id="42",
+            origin_session_avatar_id="jp1-grant",
+        )
+
+    assert mock_post.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer jwt",
+        "X-Tank-Origin-Session-Id": "42",
+        "X-Tank-Origin-Session-Avatar-Id": "jp1-grant",
+    }
+
+
 # ---------------------------------------------------------------------------
 # spawn_run — composite (create + ready-wait + send_message)
 # ---------------------------------------------------------------------------
@@ -304,6 +321,7 @@ def test_spawn_run_uses_spawn_endpoint(client: TankClient) -> None:
     # Second POST is the message queue.
     msg_call = mock_post.call_args_list[1]
     assert "/messages" in msg_call.args[0]
+    assert msg_call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
 
     assert result["status"] == "queued"
     assert result["session"]["id"] == "child-1"
@@ -344,6 +362,30 @@ def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> 
     msg_call = mock_post.call_args_list[1]
     assert "/messages" in msg_call.args[0]
     assert msg_call.kwargs["json"]["model"] == "gpt-5.5"
+
+
+def test_spawn_run_forwards_origin_session_avatar_to_message(client: TankClient) -> None:
+    spawn_resp = _ok_response({"id": "child-1", "status": "Pending"}, status=201)
+    list_resp = _ok_response([{"id": "child-1", "ready_at": "now", "status": "Active"}])
+    msg_resp = _ok_response({"status": "queued"})
+
+    with (
+        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
+        patch("httpx.get", return_value=list_resp),
+    ):
+        client.spawn_run(
+            "jwt",
+            prompt="hi",
+            origin_session_id="42",
+            origin_session_avatar_id="jp1-grant",
+        )
+
+    msg_call = mock_post.call_args_list[1]
+    assert msg_call.kwargs["headers"] == {
+        "Authorization": "Bearer jwt",
+        "X-Tank-Origin-Session-Id": "42",
+        "X-Tank-Origin-Session-Avatar-Id": "jp1-grant",
+    }
 
 
 def test_spawn_run_raises_when_spawn_returns_no_id(client: TankClient) -> None:

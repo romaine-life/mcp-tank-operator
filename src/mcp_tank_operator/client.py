@@ -76,6 +76,7 @@ class TankClient:
         service_jwt: str,
         *,
         origin_session_id: str | None = None,
+        origin_session_avatar_id: str | None = None,
     ) -> dict[str, str]:
         headers = {"Authorization": f"Bearer {service_jwt}"}
         # Forward the originating tank-operator session id on handoff
@@ -88,6 +89,8 @@ class TankClient:
         # (reading side); a cross-repo coordinated deploy applies.
         if origin_session_id:
             headers["X-Tank-Origin-Session-Id"] = origin_session_id
+            if origin_session_avatar_id:
+                headers["X-Tank-Origin-Session-Avatar-Id"] = origin_session_avatar_id
         return headers
 
     def list_sessions(self, service_jwt: str) -> list[dict[str, Any]]:
@@ -262,6 +265,7 @@ class TankClient:
         model: str | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
+        origin_session_avatar_id: str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {"prompt": prompt}
         if model:
@@ -271,7 +275,11 @@ class TankClient:
         r = httpx.post(
             f"{self._url}/api/internal/sessions/{session_id}/messages",
             json=body,
-            headers=self._headers(service_jwt, origin_session_id=origin_session_id),
+            headers=self._headers(
+                service_jwt,
+                origin_session_id=origin_session_id,
+                origin_session_avatar_id=origin_session_avatar_id,
+            ),
             timeout=15.0,
         )
         _check(r)
@@ -288,6 +296,7 @@ class TankClient:
         repos: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
+        origin_session_avatar_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a session, wait for ready, then queue the first prompt.
 
@@ -338,6 +347,7 @@ class TankClient:
             model=model,
             permission_mode=permission_mode,
             origin_session_id=origin_session_id,
+            origin_session_avatar_id=origin_session_avatar_id,
         )
         return {"status": "queued", "session": session, "message": message}
 
@@ -353,6 +363,7 @@ class TankClient:
         repos: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
+        origin_session_avatar_id: str | None = None,
     ) -> dict[str, Any]:
         """Create and prompt an SDK chat session through a test slot's orchestrator."""
         slot_client = TankClient(orchestrator_url=self._slot_orchestrator_url(slot_name))
@@ -371,6 +382,7 @@ class TankClient:
             repos=repos,
             permission_mode=permission_mode,
             origin_session_id=origin_session_id,
+            origin_session_avatar_id=origin_session_avatar_id,
         )
 
     def _wait_for_session_ready(

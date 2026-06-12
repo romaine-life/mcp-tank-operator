@@ -26,6 +26,7 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp_tank_operator.caller import (  # noqa: E402
     CALLER_SESSION_ID,
     ORIGIN_SESSION_ID,
+    ORIGIN_SESSION_AVATAR_ID,
     SERVICE_BEARER,
 )
 from mcp_tank_operator.tools import register_tools  # noqa: E402
@@ -64,6 +65,15 @@ def _origin(session_id: str | None):
         yield
     finally:
         ORIGIN_SESSION_ID.reset(token)
+
+
+@contextlib.contextmanager
+def _origin_avatar(avatar_id: str | None):
+    token = ORIGIN_SESSION_AVATAR_ID.set(avatar_id)
+    try:
+        yield
+    finally:
+        ORIGIN_SESSION_AVATAR_ID.reset(token)
 
 
 @contextlib.contextmanager
@@ -196,8 +206,12 @@ def test_model_and_mode_parameters_defer_validation_to_tank(mcp_client_pair) -> 
         assert "enum" not in string_branch
     for name in ("create_session", "spawn_run_session", "spawn_test_slot_session"):
         schema = _get_tool_object(mcp, name).parameters["properties"]["mode"]
-        assert schema["type"] == "string"
-        assert "enum" not in schema
+        if "anyOf" in schema:
+            string_branch = next(part for part in schema["anyOf"] if part.get("type") == "string")
+            assert "enum" not in string_branch
+        else:
+            assert schema["type"] == "string"
+            assert "enum" not in schema
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +552,7 @@ def test_send_prompt_delegates_to_client(mcp_client_pair) -> None:
         model=None,
         permission_mode=None,
         origin_session_id=None,
+        origin_session_avatar_id=None,
     )
     assert result["status"] == "queued"
 
@@ -551,7 +566,7 @@ def test_send_prompt_forwards_optional_model(mcp_client_pair) -> None:
     assert client.send_message.call_args.kwargs["model"] == "claude-opus-4-7"
 
 
-def test_send_prompt_forwards_origin_session_id(mcp_client_pair) -> None:
+def test_send_prompt_forwards_origin_session_fields(mcp_client_pair) -> None:
     """Cross-session handoff path: when the calling pod's mcp-auth-proxy
     set X-Tank-Origin-Session-Id, the middleware binds it into
     ORIGIN_SESSION_ID and the tool forwards it as origin_session_id so
@@ -561,18 +576,20 @@ def test_send_prompt_forwards_origin_session_id(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.send_message.return_value = {"status": "queued"}
     fn = _get_tool(mcp, "send_prompt")
-    with _bearer("jwt"), _origin("42"):
+    with _bearer("jwt"), _origin("42"), _origin_avatar("jp1-grant"):
         fn(session_id="abc", prompt="hi")
     assert client.send_message.call_args.kwargs["origin_session_id"] == "42"
+    assert client.send_message.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
 
 
-def test_spawn_run_session_forwards_origin_session_id(mcp_client_pair) -> None:
+def test_spawn_run_session_forwards_origin_session_fields(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.spawn_run.return_value = {"session": {"id": "new"}, "status": "queued"}
     fn = _get_tool(mcp, "spawn_run_session")
-    with _bearer("jwt"), _origin("42"):
+    with _bearer("jwt"), _origin("42"), _origin_avatar("jp1-grant"):
         fn(prompt="investigate issue")
     assert client.spawn_run.call_args.kwargs["origin_session_id"] == "42"
+    assert client.spawn_run.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +613,7 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
         repos=None,
         permission_mode=None,
         origin_session_id=None,
+        origin_session_avatar_id=None,
     )
     assert result["status"] == "queued"
 
@@ -658,20 +676,22 @@ def test_spawn_test_slot_session_delegates_to_client(mcp_client_pair) -> None:
         repos=None,
         permission_mode=None,
         origin_session_id=None,
+        origin_session_avatar_id=None,
     )
     assert result["status"] == "queued"
 
 
-def test_spawn_test_slot_session_forwards_origin_session_id(mcp_client_pair) -> None:
+def test_spawn_test_slot_session_forwards_origin_session_fields(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.spawn_test_slot_session.return_value = {
         "session": {"id": "slot-child"},
         "status": "queued",
     }
     fn = _get_tool(mcp, "spawn_test_slot_session")
-    with _bearer("jwt"), _origin("42"):
+    with _bearer("jwt"), _origin("42"), _origin_avatar("jp1-grant"):
         fn(slot_name="tank-operator-slot-2", prompt="validate issue")
     assert client.spawn_test_slot_session.call_args.kwargs["origin_session_id"] == "42"
+    assert client.spawn_test_slot_session.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
 
 
 def test_spawn_test_slot_session_raises_without_service_bearer(mcp_client_pair) -> None:

@@ -35,7 +35,9 @@ from .caller import (
     CALLER_SESSION_SCOPE_HEADER,
     CALLER_SYSTEM_HEADER,
     ORIGIN_SESSION_HEADER,
+    ORIGIN_SESSION_AVATAR_HEADER,
     ORIGIN_SESSION_ID,
+    ORIGIN_SESSION_AVATAR_ID,
     SERVICE_BEARER,
     SERVICE_BEARER_HEADER,
 )
@@ -57,6 +59,9 @@ class CallerIdentityMiddleware(BaseHTTPMiddleware):
         origin = request.headers.get(ORIGIN_SESSION_HEADER)
         if origin is not None:
             origin = origin.strip() or None
+        origin_avatar = request.headers.get(ORIGIN_SESSION_AVATAR_HEADER)
+        if origin_avatar is not None:
+            origin_avatar = origin_avatar.strip() or None
         caller_system = (request.headers.get(CALLER_SYSTEM_HEADER) or "").strip()
         caller_kind = (request.headers.get(CALLER_KIND_HEADER) or "").strip()
         caller_session_id = None
@@ -70,6 +75,7 @@ class CallerIdentityMiddleware(BaseHTTPMiddleware):
             ).strip() or None
         token = SERVICE_BEARER.set(bearer)
         origin_token = ORIGIN_SESSION_ID.set(origin)
+        origin_avatar_token = ORIGIN_SESSION_AVATAR_ID.set(origin_avatar)
         caller_session_token = CALLER_SESSION_ID.set(caller_session_id)
         caller_scope_token = CALLER_SESSION_SCOPE.set(caller_session_scope)
         try:
@@ -77,6 +83,7 @@ class CallerIdentityMiddleware(BaseHTTPMiddleware):
         finally:
             CALLER_SESSION_SCOPE.reset(caller_scope_token)
             CALLER_SESSION_ID.reset(caller_session_token)
+            ORIGIN_SESSION_AVATAR_ID.reset(origin_avatar_token)
             ORIGIN_SESSION_ID.reset(origin_token)
             SERVICE_BEARER.reset(token)
 

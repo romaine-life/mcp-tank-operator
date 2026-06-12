@@ -16,7 +16,12 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .caller import current_caller_session_id, current_origin_session_id, current_service_bearer
+from .caller import (
+    current_caller_session_id,
+    current_origin_session_avatar_id,
+    current_origin_session_id,
+    current_service_bearer,
+)
 from .client import TankClient
 
 _SERVICE_BEARER_MISSING_MSG = (
@@ -572,6 +577,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             # — the handoff reads as agent-authored rather than as the
             # human owner typing it themselves.
             origin_session_id=current_origin_session_id(),
+            origin_session_avatar_id=current_origin_session_avatar_id(),
         )
 
     @mcp.tool()
@@ -617,6 +623,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             # See send_prompt — same flow, only the first turn in the
             # freshly spawned session needs the parent-session avatar.
             origin_session_id=current_origin_session_id(),
+            origin_session_avatar_id=current_origin_session_avatar_id(),
         )
 
     @mcp.tool()
@@ -666,6 +673,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             # Same cross-session handoff stamp as spawn_run_session, but scoped
             # to the test slot's orchestrator.
             origin_session_id=current_origin_session_id(),
+            origin_session_avatar_id=current_origin_session_avatar_id(),
         )
 
     @mcp.tool()
