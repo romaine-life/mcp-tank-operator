@@ -582,6 +582,18 @@ def test_send_prompt_forwards_origin_session_fields(mcp_client_pair) -> None:
     assert client.send_message.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
 
 
+def test_send_prompt_falls_back_to_origin_session_row_avatar(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [{"id": "42", "agent_avatar_id": "jp1-grant"}]
+    client.send_message.return_value = {"status": "queued"}
+    fn = _get_tool(mcp, "send_prompt")
+    with _bearer("jwt"), _origin("42"):
+        fn(session_id="abc", prompt="hi")
+    client.list_sessions.assert_called_once_with("jwt")
+    assert client.send_message.call_args.kwargs["origin_session_id"] == "42"
+    assert client.send_message.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
+
+
 def test_spawn_run_session_forwards_origin_session_fields(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.spawn_run.return_value = {"session": {"id": "new"}, "status": "queued"}
@@ -690,6 +702,21 @@ def test_spawn_test_slot_session_forwards_origin_session_fields(mcp_client_pair)
     fn = _get_tool(mcp, "spawn_test_slot_session")
     with _bearer("jwt"), _origin("42"), _origin_avatar("jp1-grant"):
         fn(slot_name="tank-operator-slot-2", prompt="validate issue")
+    assert client.spawn_test_slot_session.call_args.kwargs["origin_session_id"] == "42"
+    assert client.spawn_test_slot_session.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
+
+
+def test_spawn_test_slot_session_falls_back_to_origin_session_row_avatar(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [{"id": "42", "agent_avatar_id": "jp1-grant"}]
+    client.spawn_test_slot_session.return_value = {
+        "session": {"id": "slot-child"},
+        "status": "queued",
+    }
+    fn = _get_tool(mcp, "spawn_test_slot_session")
+    with _bearer("jwt"), _origin("42"):
+        fn(slot_name="tank-operator-slot-2", prompt="validate issue")
+    client.list_sessions.assert_called_once_with("jwt")
     assert client.spawn_test_slot_session.call_args.kwargs["origin_session_id"] == "42"
     assert client.spawn_test_slot_session.call_args.kwargs["origin_session_avatar_id"] == "jp1-grant"
 
