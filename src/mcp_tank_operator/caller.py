@@ -37,6 +37,9 @@ SERVICE_BEARER: ContextVar[str | None] = ContextVar(
 ORIGIN_SESSION_ID: ContextVar[str | None] = ContextVar(
     "mcp_tank_operator_origin_session_id", default=None,
 )
+ORIGIN_SESSION_AVATAR_ID: ContextVar[str | None] = ContextVar(
+    "mcp_tank_operator_origin_session_avatar_id", default=None,
+)
 
 CALLER_SESSION_ID: ContextVar[str | None] = ContextVar(
     "mcp_tank_operator_caller_session_id", default=None,
@@ -57,6 +60,7 @@ SERVICE_BEARER_HEADER = "x-auth-romaine-token"
 # unknown header values, so the worst case during rollout is the
 # avatar falls back to the human Gravatar.
 ORIGIN_SESSION_HEADER = "x-tank-origin-session-id"
+ORIGIN_SESSION_AVATAR_HEADER = "x-tank-origin-session-avatar-id"
 CALLER_SYSTEM_HEADER = "x-tank-caller-system"
 CALLER_KIND_HEADER = "x-tank-caller-kind"
 CALLER_SESSION_ID_HEADER = "x-tank-caller-session-id"
@@ -69,6 +73,10 @@ def current_service_bearer() -> str | None:
 
 def current_origin_session_id() -> str | None:
     return ORIGIN_SESSION_ID.get()
+
+
+def current_origin_session_avatar_id() -> str | None:
+    return ORIGIN_SESSION_AVATAR_ID.get()
 
 
 def current_caller_session_id() -> str | None:
