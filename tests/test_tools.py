@@ -651,7 +651,7 @@ def test_spawn_test_slot_session_delegates_to_client(mcp_client_pair) -> None:
         "eyJ.fake.jwt",
         slot_name="tank-operator-slot-2",
         prompt="validate issue",
-        mode="claude_gui",
+        mode=None,
         name="slot validation",
         model=None,
         effort=None,
