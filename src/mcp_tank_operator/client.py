@@ -375,6 +375,20 @@ class TankClient:
             origin_session_avatar_id=origin_session_avatar_id,
         )
 
+    def for_slot(self, slot_name: str) -> "TankClient":
+        """Return a client bound to a test slot's OWN orchestrator.
+
+        Sessions created with ``spawn_test_slot_session`` live in the slot
+        orchestrator's session registry, not production's. Reading, messaging,
+        deleting, or listing one therefore has to target that slot — otherwise
+        the id resolves against prod, where the same id is a different (or
+        missing) session. This exposes the same slot routing
+        ``spawn_test_slot_session`` already uses. ``_slot_orchestrator_url``
+        refuses production targets and validates the slot name, so the returned
+        client can never be pointed at prod.
+        """
+        return TankClient(orchestrator_url=self._slot_orchestrator_url(slot_name))
+
     # ----- Session-image override (test-slot repoint) ----------------------
     #
     # These target a Glimmung TEST SLOT's orchestrator, NOT production. A

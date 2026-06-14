@@ -522,3 +522,22 @@ def test_slot_orchestrator_url_refuses_production_targets(client: TankClient) ->
     for bad in ("default", "tank-operator", "   ", "", "https://tank.romaine.life", "slot/../../x"):
         with pytest.raises(ValueError):
             client._slot_orchestrator_url(bad)
+
+
+# ---------------------------------------------------------------------------
+# for_slot — slot-scoped client so read/drive/delete can target a slot session
+# ---------------------------------------------------------------------------
+
+
+def test_for_slot_binds_client_to_slot_orchestrator(client: TankClient) -> None:
+    slot = client.for_slot("tank-operator-slot-2")
+    assert isinstance(slot, TankClient)
+    # Points at the slot's OWN orchestrator (namespace == slot name), not the
+    # configured prod URL — so reads/sends/deletes hit that slot's registry.
+    assert slot._url == "http://tank-operator.tank-operator-slot-2.svc:80"
+
+
+def test_for_slot_refuses_production_targets(client: TankClient) -> None:
+    for bad in ("default", "tank-operator", "", "   ", "slot/../../x"):
+        with pytest.raises(ValueError):
+            client.for_slot(bad)
