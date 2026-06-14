@@ -50,6 +50,19 @@ def _service_bearer() -> str:
     return jwt
 
 
+def _client_for_slot(client: TankClient, slot_name: str | None) -> TankClient:
+    """Route to a test slot's own orchestrator when slot_name is set, else prod.
+
+    ``spawn_test_slot_session`` creates sessions in a slot orchestrator's own
+    registry, so a session-by-id tool (list/read/send/delete/url) must target
+    that slot — otherwise the id resolves against production, where the same id
+    is a different or missing session. Passing the slot name routes the call to
+    that slot's registry; omitting it keeps the production behavior.
+    """
+    name = (slot_name or "").strip()
+    return client.for_slot(name) if name else client
+
+
 def _origin_session_context(client: TankClient, service_bearer: str) -> tuple[str | None, str | None]:
     origin_session_id = current_origin_session_id()
     origin_avatar_id = current_origin_session_avatar_id()
@@ -259,15 +272,20 @@ def _check_entry(name: str, ok: bool, evidence: Any) -> dict[str, Any]:
 
 def register_tools(mcp: FastMCP, client: TankClient) -> None:
     @mcp.tool()
-    def list_sessions() -> list[dict[str, Any]]:
+    def list_sessions(slot_name: str | None = None) -> list[dict[str, Any]]:
         """List tank-operator sessions owned by the calling session pod's owner.
 
         Returns id, pod_name, mode, status, name, requested_at, created_at,
         ready_at, and url for each session. Use to discover sibling sessions
         before sending them a prompt with send_prompt, or to check whether a
         session you spawned has started.
+
+        Pass `slot_name` (e.g. "tank-operator-slot-2") to list sessions in that
+        test slot's own orchestrator — the ones created by
+        spawn_test_slot_session, which do NOT appear in the production list.
+        Omit it for production sessions.
         """
-        return client.list_sessions(_service_bearer())
+        return _client_for_slot(client, slot_name).list_sessions(_service_bearer())
 
     @mcp.tool()
     def get_session_run_options() -> dict[str, Any]:
@@ -421,6 +439,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         rows: int | None = None,
         before_cursor: str | None = None,
         timeline_id: str | None = None,
+        slot_name: str | None = None,
     ) -> dict[str, Any]:
         """Read another session's conversation transcript (the caller's own).
 
@@ -451,10 +470,13 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
           - `before_cursor`: a `prev_cursor` from an earlier call, to page
             backward through history.
           - `timeline_id`: center the page on a specific transcript row.
+          - `slot_name`: if the target session was created by
+            spawn_test_slot_session, the slot name (e.g. "tank-operator-slot-2")
+            so the read targets that slot's own registry instead of production.
 
         `anchor`, `before_cursor`, and `timeline_id` are mutually exclusive.
         """
-        return client.read_transcript(
+        return _client_for_slot(client, slot_name).read_transcript(
             _service_bearer(),
             session_id=session_id,
             anchor=anchor,
@@ -464,13 +486,19 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
-    def delete_session(session_id: str) -> dict[str, Any]:
+    def delete_session(session_id: str, slot_name: str | None = None) -> dict[str, Any]:
         """Delete a tank-operator session pod owned by the calling user.
 
         The calling user must own the session — attempting to delete another
         user's session raises 403. Returns {"id": ..., "status": "deleted"}.
+
+        Pass `slot_name` to delete a session created in that test slot's own
+        orchestrator (via spawn_test_slot_session); omit it for production
+        sessions.
         """
-        return client.delete_session(_service_bearer(), session_id=session_id)
+        return _client_for_slot(client, slot_name).delete_session(
+            _service_bearer(), session_id=session_id
+        )
 
     @mcp.tool()
     def set_session_name(session_id: str, name: str | None) -> dict[str, Any]:
@@ -520,14 +548,18 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
-    def get_session_url(session_id: str) -> dict[str, str]:
+    def get_session_url(session_id: str, slot_name: str | None = None) -> dict[str, str]:
         """Return the tank UI URL for a session.
 
         Opens the session in the tank web interface. `session_id` may be either
         the real session id or the friendly name shown in the Tank UI. The
         session must be owned by the calling user.
+
+        Pass `slot_name` to resolve a session created in that test slot's own
+        orchestrator (via spawn_test_slot_session); omit it for production.
         """
-        session = _resolve_session_ref(client.list_sessions(_service_bearer()), session_id)
+        target = _client_for_slot(client, slot_name)
+        session = _resolve_session_ref(target.list_sessions(_service_bearer()), session_id)
         return {"session_id": str(session.get("id", "")), "url": session.get("url", "")}
 
     @mcp.tool()
@@ -536,6 +568,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         prompt: str,
         model: str | None = None,
         permission_mode: str | None = None,
+        slot_name: str | None = None,
     ) -> dict[str, Any]:
         """Send a follow-up prompt to an existing SDK chat session.
 
@@ -548,11 +581,15 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         it is not accepted; omit it unless the user explicitly asked for a
         model override.
 
+        Pass `slot_name` (e.g. "tank-operator-slot-2") to prompt a session
+        created in that test slot's own orchestrator via spawn_test_slot_session;
+        omit it for production sessions.
+
         For a completely fresh session, use spawn_run_session instead.
         """
         service_bearer = _service_bearer()
         origin_session_id, origin_session_avatar_id = _origin_session_context(client, service_bearer)
-        return client.send_message(
+        return _client_for_slot(client, slot_name).send_message(
             service_bearer,
             session_id=session_id,
             prompt=prompt,

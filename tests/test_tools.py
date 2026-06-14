@@ -811,3 +811,83 @@ def test_point_slot_session_image_raises_without_service_bearer(mcp_client_pair)
     with _bearer(None):
         with pytest.raises(ValueError, match="service-principal authentication required"):
             fn(slot="tank-operator-slot-2", codex_image="x")
+
+
+# ---------------------------------------------------------------------------
+# slot_name routing — list/read/send/delete/url target a test slot's own
+# orchestrator registry (the sessions spawn_test_slot_session creates), not
+# production. Omitting slot_name keeps the production path (covered above).
+# ---------------------------------------------------------------------------
+
+
+def test_list_sessions_routes_to_slot_when_slot_name(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    slot_client = client.for_slot.return_value
+    slot_client.list_sessions.return_value = [{"id": "36"}]
+    fn = _get_tool(mcp, "list_sessions")
+    with _bearer("jwt"):
+        result = fn(slot_name="tank-operator-slot-2")
+    client.for_slot.assert_called_once_with("tank-operator-slot-2")
+    slot_client.list_sessions.assert_called_once_with("jwt")
+    client.list_sessions.assert_not_called()
+    assert result == [{"id": "36"}]
+
+
+def test_list_sessions_uses_prod_when_no_slot(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.list_sessions.return_value = [{"id": "abc"}]
+    fn = _get_tool(mcp, "list_sessions")
+    with _bearer("jwt"):
+        fn()
+    client.for_slot.assert_not_called()
+    client.list_sessions.assert_called_once_with("jwt")
+
+
+def test_read_transcript_routes_to_slot(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    slot_client = client.for_slot.return_value
+    slot_client.read_transcript.return_value = {"rows": []}
+    fn = _get_tool(mcp, "read_transcript")
+    with _bearer("jwt"):
+        fn(session_id="36", slot_name="tank-operator-slot-2")
+    client.for_slot.assert_called_once_with("tank-operator-slot-2")
+    assert slot_client.read_transcript.call_args.kwargs["session_id"] == "36"
+    client.read_transcript.assert_not_called()
+
+
+def test_delete_session_routes_to_slot(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    slot_client = client.for_slot.return_value
+    slot_client.delete_session.return_value = {"id": "36", "status": "deleted"}
+    fn = _get_tool(mcp, "delete_session")
+    with _bearer("jwt"):
+        result = fn(session_id="36", slot_name="tank-operator-slot-2")
+    client.for_slot.assert_called_once_with("tank-operator-slot-2")
+    slot_client.delete_session.assert_called_once_with("jwt", session_id="36")
+    client.delete_session.assert_not_called()
+    assert result["status"] == "deleted"
+
+
+def test_send_prompt_routes_to_slot(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    slot_client = client.for_slot.return_value
+    slot_client.send_message.return_value = {"status": "queued"}
+    fn = _get_tool(mcp, "send_prompt")
+    with _bearer("jwt"):
+        result = fn(session_id="36", prompt="hi", slot_name="tank-operator-slot-2")
+    client.for_slot.assert_called_once_with("tank-operator-slot-2")
+    assert slot_client.send_message.call_args.kwargs["session_id"] == "36"
+    client.send_message.assert_not_called()
+    assert result["status"] == "queued"
+
+
+def test_get_session_url_routes_to_slot(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    slot_client = client.for_slot.return_value
+    slot_client.list_sessions.return_value = [{"id": "36", "url": "https://slot/36"}]
+    fn = _get_tool(mcp, "get_session_url")
+    with _bearer("jwt"):
+        result = fn(session_id="36", slot_name="tank-operator-slot-2")
+    client.for_slot.assert_called_once_with("tank-operator-slot-2")
+    slot_client.list_sessions.assert_called_once_with("jwt")
+    assert result == {"session_id": "36", "url": "https://slot/36"}
