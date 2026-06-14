@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-import time
+import secrets
 from typing import Any
 
 import httpx
@@ -27,8 +27,6 @@ ORCHESTRATOR_URL = os.environ.get(
 )
 
 _ERROR_BODY_CAP = 1200
-_SPAWN_READY_TIMEOUT_SECONDS = 120.0
-_SPAWN_READY_POLL_SECONDS = 2.0
 _SLOT_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -165,35 +163,6 @@ class TankClient:
         _check(r)
         return r.json()
 
-    def create_session(
-        self,
-        service_jwt: str,
-        mode: str,
-        model: str | None = None,
-        effort: str | None = None,
-        repos: list[str] | None = None,
-    ) -> dict[str, Any]:
-        body: dict[str, Any] = {"mode": mode}
-        # model/effort are session-owned run config. Tank validates them
-        # server-side against provider-supported values and returns the chosen
-        # config in the session row so the UI can show it immediately.
-        if model:
-            body["model"] = model
-        if effort:
-            body["effort"] = effort
-        # repos drives the repo-cloner init container so the pod boots with
-        # the "owner/name" selection already cloned into /workspace.
-        if repos:
-            body["repos"] = repos
-        r = httpx.post(
-            f"{self._url}/api/internal/sessions",
-            json=body,
-            headers=self._headers(service_jwt),
-            timeout=15.0,
-        )
-        _check(r)
-        return r.json()
-
     def delete_session(
         self, service_jwt: str, session_id: str,
     ) -> dict[str, Any]:
@@ -298,24 +267,36 @@ class TankClient:
         origin_session_id: str | None = None,
         origin_session_avatar_id: str | None = None,
     ) -> dict[str, Any]:
-        """Create a session, wait for ready, then queue the first prompt.
+        """Create a durable chat session whose first turn is ``prompt``.
 
-        `origin_session_id` rides only on the inner send_message call,
-        not on the create. Tank-operator stamps it onto the persisted
-        user_message.created event so the frontend renders the parent
-        session's avatar on the first user bubble in the new session —
-        making it visually obvious that the prompt came from another
-        agent rather than the human owner.
+        The prompt rides the create request as ``initial_turn`` — it is NOT a
+        separate follow-up call. tank-operator requires the first turn at
+        create time for GUI chat sessions (``handlers_internal.go`` rejects a
+        promptless GUI create), durably enqueues it before the pod is ready
+        (``AllowBeforeReady``), and returns the session row plus the queued
+        turn under ``initial_turn`` in one response.
+
+        There is deliberately no "create empty, wait for ready, then
+        send_message" path. That older two-step left a window where a GUI
+        session existed with no turn — exactly the empty, unusable session the
+        orchestrator now forbids. ``prompt`` is required here so this client can
+        never create that empty session; the orchestrator gate is the backstop.
+
+        ``origin_session_id`` rides the create so tank-operator stamps it on the
+        persisted user_message.created event and the frontend renders the parent
+        session's avatar on the first user bubble — making it visually obvious
+        the prompt came from another agent rather than the human owner.
         """
+        if not prompt or not prompt.strip():
+            raise ValueError("prompt is required and must be non-empty")
         body: dict[str, Any] = {}
         if mode:
             body["mode"] = mode
         if name:
             body["name"] = name
-        # model/effort ride the CREATE, not just the first turn, so the
-        # session row records the chosen config before the runner starts. The
-        # model is also passed to the first turn so older sessions without a
-        # durable run config still match.
+        # model/effort ride the CREATE so the session row records the chosen
+        # run config before the runner starts; the orchestrator applies the
+        # same run config to the initial turn it enqueues.
         if model:
             body["model"] = model
         if effort:
@@ -324,32 +305,32 @@ class TankClient:
         # via the repo-cloner init container (no in-session clone needed).
         if repos:
             body["repos"] = repos
+        # The first turn is part of the create. client_nonce is a fresh
+        # idempotency key matching the orchestrator's turn-id syntax
+        # (^[A-Za-z0-9._-]{1,80}$). permission_mode is turn-scoped, so it
+        # rides initial_turn rather than the create body.
+        initial_turn: dict[str, Any] = {
+            "client_nonce": f"turn-{secrets.token_hex(8)}",
+            "prompt": prompt,
+        }
+        if permission_mode:
+            initial_turn["permission_mode"] = permission_mode
+        body["initial_turn"] = initial_turn
         # POST /api/internal/sessions — the canonical service-principal
-        # session-create endpoint. Accepts inline `name` post-#486. The
-        # legacy `/spawn` alias was retired in the API cleanup PR that
-        # ships alongside this change.
+        # session-create endpoint. The response is the session row with the
+        # queued turn under `initial_turn`.
         r = httpx.post(
             f"{self._url}/api/internal/sessions",
             json=body,
-            headers=self._headers(service_jwt),
+            headers=self._headers(
+                service_jwt,
+                origin_session_id=origin_session_id,
+                origin_session_avatar_id=origin_session_avatar_id,
+            ),
             timeout=15.0,
         )
         _check(r)
-        session = r.json()
-        session_id = str(session.get("id") or "")
-        if not session_id:
-            raise RuntimeError(f"spawn returned no id: {session!r}")
-        session = self._wait_for_session_ready(service_jwt, session_id)
-        message = self.send_message(
-            service_jwt,
-            session_id=session_id,
-            prompt=prompt,
-            model=model,
-            permission_mode=permission_mode,
-            origin_session_id=origin_session_id,
-            origin_session_avatar_id=origin_session_avatar_id,
-        )
-        return {"status": "queued", "session": session, "message": message}
+        return {"status": "queued", "session": r.json()}
 
     def spawn_test_slot_session(
         self,
@@ -383,27 +364,6 @@ class TankClient:
             permission_mode=permission_mode,
             origin_session_id=origin_session_id,
             origin_session_avatar_id=origin_session_avatar_id,
-        )
-
-    def _wait_for_session_ready(
-        self,
-        service_jwt: str,
-        session_id: str,
-        timeout_seconds: float = _SPAWN_READY_TIMEOUT_SECONDS,
-    ) -> dict[str, Any]:
-        deadline = time.monotonic() + timeout_seconds
-        last_session: dict[str, Any] | None = None
-        while time.monotonic() < deadline:
-            for session in self.list_sessions(service_jwt):
-                if str(session.get("id")) != session_id:
-                    continue
-                last_session = session
-                if session.get("ready_at") or session.get("status") == "Active":
-                    return session
-            time.sleep(_SPAWN_READY_POLL_SECONDS)
-        raise TimeoutError(
-            f"session {session_id} was not ready after {timeout_seconds:.0f}s"
-            + (f"; last state: {last_session!r}" if last_session else "")
         )
 
     # ----- Session-image override (test-slot repoint) ----------------------

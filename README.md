@@ -22,14 +22,13 @@ Images are SHA-tagged from `main`; `.github/workflows/build.yml` pushes the imag
   provider model/effort lists, retired create modes, and defaults. Use this
   before choosing a non-default `mode`, `model`, or `effort`; Tank remains the
   validator and returns actionable errors for unsupported values.
-- `create_session(mode)` — spawn a new session pod. Current chat modes are `claude_gui` and `codex_gui`; default is `claude_gui`.
 - `delete_session(session_id)` — delete one of the caller's sessions.
 - `set_session_name(session_id, name)` — set or clear the friendly display name.
 - `set_test_environment(session_id, ...)` — update the Tank UI test workflow link state.
 - `set_pull_request_link(session_id, url)` — update the Tank UI PR link for the active test workflow.
 - `get_session_url(session_id)` — tank UI URL for an existing session; accepts either an id or display name.
 - `send_prompt(session_id, prompt, ...)` — fire-and-forget follow-up prompt to an SDK chat session.
-- `spawn_run_session(prompt, mode, ...)` — create a fresh SDK chat session, wait for its pod to become ready, then queue the first prompt.
+- `spawn_run_session(prompt, mode, ...)` — create a fresh SDK chat session with `prompt` as its first turn. The prompt is required and rides the create request as `initial_turn`; the orchestrator enqueues it before the pod is ready and returns the session row plus the queued turn. There is no promptless "create empty, prompt later" path — that is why the old `create_session` tool was removed. This is the canonical way to start a new chat session.
 - `spawn_test_slot_session(slot_name, prompt, mode, ...)` — create a fresh SDK chat session through a Glimmung test slot's own Tank orchestrator, then queue the first prompt. Use this for test-slot validation; it requires a slot name such as `tank-operator-slot-2` and refuses production-ish targets. When `mode`/`model`/`effort` are omitted, the tool reads Tank's admin-configured `test_slot_defaults` from run options.
 - `point_slot_session_image(slot, codex_image, claude_image, antigravity_image, git_ref)` — point a Glimmung **test slot** at a branch-built session image so NEWLY-created sessions in that slot boot it (the same image lever production uses, no runtime overlay). Covers all three session-runner providers (claude / codex / antigravity); set one or several at once. For antigravity specifically this is the supported validation path, since the Go antigravity-runner has no running-pod hot-swap via `apply_test_slot_hot_swap`. Complements Glimmung's `apply_test_slot_hot_swap`, which only patches already-running pods. The image must already exist in ACR (build it via the tank-operator `session-images-build.yml` workflow first); the production scope is refused server-side, so this can only repoint test slots. Targets the slot's own orchestrator (`tank-operator.<slot>.svc`), where the test-env gate is on.
 - `get_slot_session_image(slot)` — report what session image NEW sessions in a test slot will boot (the current override, or `override_set: false`). Read-only.

@@ -8,6 +8,7 @@ IP-tail + SA-token auth path tested previously.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -155,50 +156,6 @@ def test_read_transcript_raises_on_404(client: TankClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# create_session
-# ---------------------------------------------------------------------------
-
-
-def test_create_session_sends_post_with_jwt(client: TankClient) -> None:
-    session = {"id": "new123", "mode": "claude_gui", "status": "Pending"}
-    with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
-        result = client.create_session("jwt", mode="claude_gui")
-    assert result["id"] == "new123"
-    call = mock_post.call_args
-    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
-    assert call.kwargs["json"] == {"mode": "claude_gui"}
-    assert "params" not in call.kwargs
-
-
-def test_create_session_includes_model_effort_repos(client: TankClient) -> None:
-    # Explicit run config must ride the session CREATE so the row records the
-    # model/effort before the runner starts.
-    session = {"id": "cdx1", "mode": "codex_gui", "status": "Pending"}
-    with patch("httpx.post", return_value=_ok_response(session, status=201)) as mock_post:
-        client.create_session(
-            "jwt",
-            mode="codex_gui",
-            model="gpt-5.5",
-            effort="high",
-            repos=["romaine-life/glimmung"],
-        )
-    assert mock_post.call_args.kwargs["json"] == {
-        "mode": "codex_gui",
-        "model": "gpt-5.5",
-        "effort": "high",
-        "repos": ["romaine-life/glimmung"],
-    }
-    assert mock_post.call_args.kwargs["headers"] == {"Authorization": "Bearer jwt"}
-
-
-def test_create_session_omits_unset_run_config(client: TankClient) -> None:
-    # A bare claude create stays {"mode": ...} so defaults apply server-side.
-    with patch("httpx.post", return_value=_ok_response({"id": "c"}, status=201)) as mock_post:
-        client.create_session("jwt", mode="claude_gui")
-    assert mock_post.call_args.kwargs["json"] == {"mode": "claude_gui"}
-
-
-# ---------------------------------------------------------------------------
 # delete_session / set_session_name / set_test_environment
 # ---------------------------------------------------------------------------
 
@@ -292,53 +249,52 @@ def test_send_message_forwards_origin_session_avatar_header(client: TankClient) 
 
 
 # ---------------------------------------------------------------------------
-# spawn_run — composite (create + ready-wait + send_message)
+# spawn_run — single create that carries the first turn as initial_turn
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_run_uses_spawn_endpoint(client: TankClient) -> None:
-    # First call: POST /spawn returns the session record.
-    # Then ready-wait polls list_sessions until ready.
-    # Then send_message queues the first turn.
-    spawn_resp = _ok_response({"id": "child-1", "status": "Pending"}, status=201)
-    list_resp = _ok_response([{"id": "child-1", "ready_at": "now", "status": "Active"}])
-    msg_resp = _ok_response({"status": "queued"})
-
-    with (
-        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
-        patch("httpx.get", return_value=list_resp),
-    ):
+def test_spawn_run_sends_initial_turn_on_create(client: TankClient) -> None:
+    # The prompt rides the CREATE as initial_turn — there is no second
+    # /messages call and no ready-wait. The orchestrator requires the first
+    # turn at create time for GUI chat sessions, so a promptless create that
+    # could leave an empty, unusable session is never issued.
+    create_resp = _ok_response(
+        {"id": "child-1", "status": "Pending", "initial_turn": {"status": "queued"}},
+        status=201,
+    )
+    with patch("httpx.post", return_value=create_resp) as mock_post:
         result = client.spawn_run("jwt", prompt="hi", mode="claude_gui", name="child-1")
 
-    # First POST is the canonical /api/internal/sessions create endpoint
-    # with the inline name. (The legacy /spawn alias was retired in the
-    # API cleanup that followed the #486 cutover.)
-    spawn_call = mock_post.call_args_list[0]
-    assert spawn_call.args[0].endswith("/api/internal/sessions")
-    assert spawn_call.kwargs["json"] == {"mode": "claude_gui", "name": "child-1"}
-    assert spawn_call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
-
-    # Second POST is the message queue.
-    msg_call = mock_post.call_args_list[1]
-    assert "/messages" in msg_call.args[0]
-    assert msg_call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
-
+    # Exactly one POST: the create. No /messages follow-up, no list-poll.
+    assert mock_post.call_count == 1
+    call = mock_post.call_args
+    assert call.args[0].endswith("/api/internal/sessions")
+    body = call.kwargs["json"]
+    assert body["mode"] == "claude_gui"
+    assert body["name"] == "child-1"
+    assert body["initial_turn"]["prompt"] == "hi"
+    # client_nonce matches the orchestrator turn-id syntax ^[A-Za-z0-9._-]{1,80}$.
+    assert re.fullmatch(r"[A-Za-z0-9._-]{1,80}", body["initial_turn"]["client_nonce"])
+    assert call.kwargs["headers"] == {"Authorization": "Bearer jwt"}
     assert result["status"] == "queued"
     assert result["session"]["id"] == "child-1"
 
 
-def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> None:
-    # Explicit run config must ride the session CREATE so the row records the
-    # model/effort before the runner starts. The model is ALSO forwarded to the
-    # first turn so older sessions without a durable run config still match.
-    spawn_resp = _ok_response({"id": "cdx-1", "status": "Pending"}, status=201)
-    list_resp = _ok_response([{"id": "cdx-1", "ready_at": "now", "status": "Active"}])
-    msg_resp = _ok_response({"status": "queued"})
+def test_spawn_run_requires_non_empty_prompt(client: TankClient) -> None:
+    # The client refuses to create a promptless GUI session — the empty,
+    # unusable-session footgun is closed on the client as well as the server.
+    with patch("httpx.post") as mock_post:
+        for bad in ("", "   "):
+            with pytest.raises(ValueError, match="prompt is required"):
+                client.spawn_run("jwt", prompt=bad)
+    mock_post.assert_not_called()
 
-    with (
-        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
-        patch("httpx.get", return_value=list_resp),
-    ):
+
+def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> None:
+    # Explicit run config rides the CREATE so the row records the model/effort
+    # before the runner starts; the orchestrator applies it to the initial turn.
+    create_resp = _ok_response({"id": "cdx-1", "status": "Pending"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
         client.spawn_run(
             "jwt",
             prompt="hi",
@@ -349,30 +305,30 @@ def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> 
             repos=["romaine-life/tank-operator"],
         )
 
-    create_call = mock_post.call_args_list[0]
-    assert create_call.args[0].endswith("/api/internal/sessions")
-    assert create_call.kwargs["json"] == {
-        "mode": "codex_gui",
-        "name": "cdx-1",
-        "model": "gpt-5.5",
-        "effort": "high",
-        "repos": ["romaine-life/tank-operator"],
-    }
-
-    msg_call = mock_post.call_args_list[1]
-    assert "/messages" in msg_call.args[0]
-    assert msg_call.kwargs["json"]["model"] == "gpt-5.5"
+    assert mock_post.call_count == 1
+    body = mock_post.call_args.kwargs["json"]
+    assert body["mode"] == "codex_gui"
+    assert body["name"] == "cdx-1"
+    assert body["model"] == "gpt-5.5"
+    assert body["effort"] == "high"
+    assert body["repos"] == ["romaine-life/tank-operator"]
+    assert body["initial_turn"]["prompt"] == "hi"
 
 
-def test_spawn_run_forwards_origin_session_avatar_to_message(client: TankClient) -> None:
-    spawn_resp = _ok_response({"id": "child-1", "status": "Pending"}, status=201)
-    list_resp = _ok_response([{"id": "child-1", "ready_at": "now", "status": "Active"}])
-    msg_resp = _ok_response({"status": "queued"})
+def test_spawn_run_forwards_permission_mode_on_initial_turn(client: TankClient) -> None:
+    # permission_mode is turn-scoped, so it rides initial_turn, not the create body.
+    create_resp = _ok_response({"id": "c"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
+        client.spawn_run("jwt", prompt="hi", permission_mode="acceptEdits")
+    initial_turn = mock_post.call_args.kwargs["json"]["initial_turn"]
+    assert initial_turn["permission_mode"] == "acceptEdits"
 
-    with (
-        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
-        patch("httpx.get", return_value=list_resp),
-    ):
+
+def test_spawn_run_forwards_origin_session_avatar_on_create(client: TankClient) -> None:
+    # The origin headers ride the CREATE now (the prompt is part of it), so the
+    # first user bubble still renders the parent session's avatar.
+    create_resp = _ok_response({"id": "child-1"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
         client.spawn_run(
             "jwt",
             prompt="hi",
@@ -380,39 +336,21 @@ def test_spawn_run_forwards_origin_session_avatar_to_message(client: TankClient)
             origin_session_avatar_id="jp1-grant",
         )
 
-    msg_call = mock_post.call_args_list[1]
-    assert msg_call.kwargs["headers"] == {
+    assert mock_post.call_args.kwargs["headers"] == {
         "Authorization": "Bearer jwt",
         "X-Tank-Origin-Session-Id": "42",
         "X-Tank-Origin-Session-Avatar-Id": "jp1-grant",
     }
 
 
-def test_spawn_run_raises_when_spawn_returns_no_id(client: TankClient) -> None:
-    with patch("httpx.post", return_value=_ok_response({"mode": "x"}, status=201)):
-        with pytest.raises(RuntimeError, match="spawn returned no id"):
-            client.spawn_run("jwt", prompt="hi")
-
-
-def test_spawn_run_times_out_waiting_for_ready_session(client: TankClient) -> None:
-    with pytest.raises(TimeoutError, match="session newrun was not ready"):
-        client._wait_for_session_ready("jwt", "newrun", timeout_seconds=0.0)
-
-
 # ---------------------------------------------------------------------------
-# spawn_test_slot_session — composite against a SLOT orchestrator
+# spawn_test_slot_session — single create against a SLOT orchestrator
 # ---------------------------------------------------------------------------
 
 
 def test_spawn_test_slot_session_uses_slot_orchestrator(client: TankClient) -> None:
-    spawn_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
-    list_resp = _ok_response([{"id": "slot-child", "ready_at": "now", "status": "Active"}])
-    msg_resp = _ok_response({"status": "queued"})
-
-    with (
-        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
-        patch("httpx.get", return_value=list_resp),
-    ):
+    create_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
         result = client.spawn_test_slot_session(
             "jwt",
             slot_name="tank-operator-slot-2",
@@ -421,14 +359,16 @@ def test_spawn_test_slot_session_uses_slot_orchestrator(client: TankClient) -> N
             name="slot validation",
         )
 
-    spawn_call = mock_post.call_args_list[0]
-    assert spawn_call.args[0] == (
+    assert mock_post.call_count == 1
+    call = mock_post.call_args
+    assert call.args[0] == (
         "http://tank-operator.tank-operator-slot-2.svc:80/api/internal/sessions"
     )
-    assert spawn_call.kwargs["json"] == {
-        "mode": "claude_gui",
-        "name": "slot validation",
-    }
+    body = call.kwargs["json"]
+    assert body["mode"] == "claude_gui"
+    assert body["name"] == "slot validation"
+    assert body["initial_turn"]["prompt"] == "validate"
+    assert result["session"]["id"] == "slot-child"
 
 
 def test_spawn_test_slot_session_uses_tank_test_slot_defaults(client: TankClient) -> None:
@@ -441,13 +381,11 @@ def test_spawn_test_slot_session_uses_tank_test_slot_defaults(client: TankClient
             }
         }
     )
-    spawn_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
-    list_resp = _ok_response([{"id": "slot-child", "ready_at": "now", "status": "Active"}])
-    msg_resp = _ok_response({"status": "queued"})
+    create_resp = _ok_response({"id": "slot-child", "status": "Pending"}, status=201)
 
     with (
-        patch("httpx.get", side_effect=[opts_resp, list_resp]),
-        patch("httpx.post", side_effect=[spawn_resp, msg_resp]) as mock_post,
+        patch("httpx.get", return_value=opts_resp),
+        patch("httpx.post", return_value=create_resp) as mock_post,
     ):
         result = client.spawn_test_slot_session(
             "jwt",
@@ -456,19 +394,17 @@ def test_spawn_test_slot_session_uses_tank_test_slot_defaults(client: TankClient
             name="slot validation",
         )
 
-    spawn_call = mock_post.call_args_list[0]
-    assert spawn_call.kwargs["json"] == {
-        "mode": "codex_gui",
-        "model": "gpt-5.4-mini",
-        "effort": "low",
-        "name": "slot validation",
-    }
-
-    msg_call = mock_post.call_args_list[1]
-    assert msg_call.args[0] == (
-        "http://tank-operator.tank-operator-slot-2.svc:80"
-        "/api/internal/sessions/slot-child/messages"
+    assert mock_post.call_count == 1
+    call = mock_post.call_args
+    assert call.args[0] == (
+        "http://tank-operator.tank-operator-slot-2.svc:80/api/internal/sessions"
     )
+    body = call.kwargs["json"]
+    assert body["mode"] == "codex_gui"
+    assert body["model"] == "gpt-5.4-mini"
+    assert body["effort"] == "low"
+    assert body["name"] == "slot validation"
+    assert body["initial_turn"]["prompt"] == "validate"
     assert result["session"]["id"] == "slot-child"
 
 
