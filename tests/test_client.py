@@ -315,6 +315,30 @@ def test_spawn_run_forwards_model_effort_repos_to_create(client: TankClient) -> 
     assert body["initial_turn"]["prompt"] == "hi"
 
 
+def test_spawn_run_forwards_capabilities_to_create(client: TankClient) -> None:
+    # restricted_git rides the CREATE body so the orchestrator opts the pod into
+    # the governed Git flow; it must not leak onto the initial turn.
+    create_resp = _ok_response({"id": "rg-1", "status": "Pending"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
+        client.spawn_run(
+            "jwt",
+            prompt="hi",
+            mode="claude_gui",
+            repos=["romaine-life/tank-operator"],
+            capabilities=["restricted_git"],
+        )
+    body = mock_post.call_args.kwargs["json"]
+    assert body["capabilities"] == ["restricted_git"]
+    assert "capabilities" not in body["initial_turn"]
+
+
+def test_spawn_run_omits_capabilities_when_unset(client: TankClient) -> None:
+    create_resp = _ok_response({"id": "c"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
+        client.spawn_run("jwt", prompt="hi")
+    assert "capabilities" not in mock_post.call_args.kwargs["json"]
+
+
 def test_spawn_run_forwards_permission_mode_on_initial_turn(client: TankClient) -> None:
     # permission_mode is turn-scoped, so it rides initial_turn, not the create body.
     create_resp = _ok_response({"id": "c"}, status=201)
@@ -369,6 +393,24 @@ def test_spawn_test_slot_session_uses_slot_orchestrator(client: TankClient) -> N
     assert body["name"] == "slot validation"
     assert body["initial_turn"]["prompt"] == "validate"
     assert result["session"]["id"] == "slot-child"
+
+
+def test_spawn_test_slot_session_forwards_capabilities(client: TankClient) -> None:
+    # The slot create must carry restricted_git so the new pod's sidecar exposes
+    # the Tank governed tools (the supported way to validate a restricted-git
+    # feature on a slot).
+    create_resp = _ok_response({"id": "slot-rg", "status": "Pending"}, status=201)
+    with patch("httpx.post", return_value=create_resp) as mock_post:
+        client.spawn_test_slot_session(
+            "jwt",
+            slot_name="tank-operator-slot-2",
+            prompt="validate",
+            mode="claude_gui",
+            repos=["romaine-life/tank-operator"],
+            capabilities=["restricted_git"],
+        )
+    body = mock_post.call_args.kwargs["json"]
+    assert body["capabilities"] == ["restricted_git"]
 
 
 def test_spawn_test_slot_session_uses_tank_test_slot_defaults(client: TankClient) -> None:

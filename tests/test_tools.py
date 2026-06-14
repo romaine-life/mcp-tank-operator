@@ -594,6 +594,7 @@ def test_spawn_run_session_delegates_to_client(mcp_client_pair) -> None:
         model=None,
         effort=None,
         repos=None,
+        capabilities=None,
         permission_mode=None,
         origin_session_id=None,
         origin_session_avatar_id=None,
@@ -657,11 +658,43 @@ def test_spawn_test_slot_session_delegates_to_client(mcp_client_pair) -> None:
         model=None,
         effort=None,
         repos=None,
+        capabilities=None,
         permission_mode=None,
         origin_session_id=None,
         origin_session_avatar_id=None,
     )
     assert result["status"] == "queued"
+
+
+def test_spawn_test_slot_session_forwards_capabilities(mcp_client_pair) -> None:
+    # Capabilities like ["restricted_git"] must reach the client so the slot
+    # orchestrator opts the new pod into the governed Git flow.
+    mcp, client = mcp_client_pair
+    client.spawn_test_slot_session.return_value = {"session": {"id": "rg"}, "status": "queued"}
+    fn = _get_tool(mcp, "spawn_test_slot_session")
+    with _bearer("jwt"):
+        fn(
+            slot_name="tank-operator-slot-2",
+            prompt="validate governed PR body",
+            mode="claude_gui",
+            repos=["romaine-life/tank-operator"],
+            capabilities=["restricted_git"],
+        )
+    assert client.spawn_test_slot_session.call_args.kwargs["capabilities"] == ["restricted_git"]
+
+
+def test_spawn_run_session_forwards_capabilities(mcp_client_pair) -> None:
+    mcp, client = mcp_client_pair
+    client.spawn_run.return_value = {"session": {"id": "rg"}, "status": "queued"}
+    fn = _get_tool(mcp, "spawn_run_session")
+    with _bearer("jwt"):
+        fn(
+            prompt="validate governed PR body",
+            mode="claude_gui",
+            repos=["romaine-life/tank-operator"],
+            capabilities=["restricted_git"],
+        )
+    assert client.spawn_run.call_args.kwargs["capabilities"] == ["restricted_git"]
 
 
 def test_spawn_test_slot_session_forwards_origin_session_fields(mcp_client_pair) -> None:

@@ -576,6 +576,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         model: str | None = None,
         effort: str | None = None,
         repos: list[str] | None = None,
+        capabilities: list[str] | None = None,
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
         """Create a fresh SDK chat session and queue the first prompt to it.
@@ -594,6 +595,10 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
           before the agent starts, so the spawned session boots with its repos
           already present.
+        - `capabilities`: optional create-time session capabilities such as
+          ["restricted_git"] (requires a repo-capable mode). Tank validates
+          them server-side. Use this to spawn a session that exercises the
+          governed Git flow.
         - `permission_mode`: forwarded to the SDK turn queue.
 
         Waits for the new session pod to become ready, then queues the
@@ -609,6 +614,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             model=model,
             effort=effort,
             repos=repos,
+            capabilities=capabilities,
             permission_mode=permission_mode,
             # See send_prompt — same flow, only the first turn in the
             # freshly spawned session needs the parent-session avatar.
@@ -625,6 +631,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         model: str | None = None,
         effort: str | None = None,
         repos: list[str] | None = None,
+        capabilities: list[str] | None = None,
         permission_mode: str | None = None,
     ) -> dict[str, Any]:
         """Create a fresh SDK chat session inside a Glimmung test slot.
@@ -645,6 +652,11 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
           them unless the user explicitly asked for a model/effort.
         - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
           before the agent starts.
+        - `capabilities`: optional create-time session capabilities such as
+          ["restricted_git"] (requires a repo-capable mode). This is the
+          supported way to validate a restricted-git feature on a slot: the
+          slot orchestrator opts the new pod into the governed Git flow so its
+          mcp-auth-proxy sidecar exposes the Tank governed tools.
         - `permission_mode`: forwarded to the SDK turn queue.
 
         Returns the slot-created session record plus the queued turn response.
@@ -661,6 +673,7 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
             model=model,
             effort=effort,
             repos=repos,
+            capabilities=capabilities,
             permission_mode=permission_mode,
             # Same cross-session handoff stamp as spawn_run_session, but scoped
             # to the test slot's orchestrator.
