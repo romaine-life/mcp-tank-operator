@@ -263,6 +263,7 @@ class TankClient:
         model: str | None = None,
         effort: str | None = None,
         repos: list[str] | None = None,
+        capabilities: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
         origin_session_avatar_id: str | None = None,
@@ -305,6 +306,12 @@ class TankClient:
         # via the repo-cloner init container (no in-session clone needed).
         if repos:
             body["repos"] = repos
+        # capabilities ride the CREATE so the orchestrator opts the pod into
+        # create-time session capabilities (e.g. ["restricted_git"] to validate
+        # the governed Git flow). tank-operator validates them server-side and
+        # rejects a capability that the chosen mode does not support.
+        if capabilities:
+            body["capabilities"] = capabilities
         # The first turn is part of the create. client_nonce is a fresh
         # idempotency key matching the orchestrator's turn-id syntax
         # (^[A-Za-z0-9._-]{1,80}$). permission_mode is turn-scoped, so it
@@ -342,6 +349,7 @@ class TankClient:
         model: str | None = None,
         effort: str | None = None,
         repos: list[str] | None = None,
+        capabilities: list[str] | None = None,
         permission_mode: str | None = None,
         origin_session_id: str | None = None,
         origin_session_avatar_id: str | None = None,
@@ -361,6 +369,7 @@ class TankClient:
             model=model,
             effort=effort,
             repos=repos,
+            capabilities=capabilities,
             permission_mode=permission_mode,
             origin_session_id=origin_session_id,
             origin_session_avatar_id=origin_session_avatar_id,
