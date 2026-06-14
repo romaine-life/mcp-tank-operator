@@ -112,14 +112,6 @@ def test_list_sessions_raises_when_no_service_bearer(mcp_client_pair) -> None:
             fn()
 
 
-def test_create_session_raises_when_no_service_bearer(mcp_client_pair) -> None:
-    mcp, _ = mcp_client_pair
-    fn = _get_tool(mcp, "create_session")
-    with _bearer(None):
-        with pytest.raises(ValueError, match="service-principal authentication required"):
-            fn()
-
-
 # ---------------------------------------------------------------------------
 # list_sessions
 # ---------------------------------------------------------------------------
@@ -157,46 +149,25 @@ def test_get_session_run_options_raises_without_service_bearer(mcp_client_pair) 
 
 
 # ---------------------------------------------------------------------------
-# create_session
+# session-create tools (spawn_run_session / spawn_test_slot_session)
 # ---------------------------------------------------------------------------
 
 
-def test_create_session_delegates_to_client(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.create_session.return_value = {"id": "new123"}
-    fn = _get_tool(mcp, "create_session")
-    with _bearer("eyJ.fake.jwt"):
-        result = fn(mode="claude_gui")
-    client.create_session.assert_called_once_with(
-        "eyJ.fake.jwt", mode="claude_gui", model=None, effort=None, repos=None,
-    )
-    assert result["id"] == "new123"
-
-
-def test_create_session_forwards_run_config_and_repos(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.create_session.return_value = {"id": "cdx"}
-    fn = _get_tool(mcp, "create_session")
-    with _bearer("jwt"):
-        fn(
-            mode="codex_gui",
-            model="gpt-5.5",
-            effort="high",
-            repos=["romaine-life/glimmung"],
-        )
-    client.create_session.assert_called_once_with(
-        "jwt",
-        mode="codex_gui",
-        model="gpt-5.5",
-        effort="high",
-        repos=["romaine-life/glimmung"],
-    )
+def test_create_session_tool_is_removed(mcp_client_pair) -> None:
+    # The promptless GUI-create footgun is gone: there is no create_session
+    # tool. New sessions are created with their first turn via
+    # spawn_run_session / spawn_test_slot_session, which the orchestrator
+    # requires for GUI chat modes. This guard keeps it from being reintroduced.
+    mcp, _ = mcp_client_pair
+    names = {tool.name for tool in mcp._tool_manager._tools.values()}
+    assert "create_session" not in names
+    with pytest.raises(KeyError):
+        _get_tool(mcp, "create_session")
 
 
 def test_model_and_mode_parameters_defer_validation_to_tank(mcp_client_pair) -> None:
     mcp, _ = mcp_client_pair
     for name in (
-        "create_session",
         "send_prompt",
         "spawn_run_session",
         "spawn_test_slot_session",
@@ -204,7 +175,7 @@ def test_model_and_mode_parameters_defer_validation_to_tank(mcp_client_pair) -> 
         schema = _get_tool_object(mcp, name).parameters["properties"]["model"]
         string_branch = next(part for part in schema["anyOf"] if part.get("type") == "string")
         assert "enum" not in string_branch
-    for name in ("create_session", "spawn_run_session", "spawn_test_slot_session"):
+    for name in ("spawn_run_session", "spawn_test_slot_session"):
         schema = _get_tool_object(mcp, name).parameters["properties"]["mode"]
         if "anyOf" in schema:
             string_branch = next(part for part in schema["anyOf"] if part.get("type") == "string")

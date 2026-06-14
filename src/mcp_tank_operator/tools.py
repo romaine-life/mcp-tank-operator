@@ -464,36 +464,6 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         )
 
     @mcp.tool()
-    def create_session(
-        mode: str = "claude_gui",
-        model: str | None = None,
-        effort: str | None = None,
-        repos: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create a new tank-operator session pod owned by the calling user.
-
-        `mode` must be one of the supported Tank session modes. Current chat
-        modes are claude_gui (default) and codex_gui. Returns the new session's
-        id, pod_name, status, mode, and url.
-
-        - `model`/`effort`: optional session run config. Tank validates these
-          server-side and returns an actionable error when a value is not
-          accepted. Omit these unless the user explicitly asked for a
-          model/effort; Tank returns accepted values in the session row so the
-          UI can show the choice.
-        - `repos`: up to 5 "owner/name" GitHub slugs cloned into /workspace
-          before the agent starts (pod-backed modes like claude_gui / codex_gui
-          only).
-
-        Use create_session + send_prompt to hand work to a fresh SDK session
-        after the pod is ready. For a combined create-and-queue flow, use
-        spawn_run_session instead.
-        """
-        return client.create_session(
-            _service_bearer(), mode=mode, model=model, effort=effort, repos=repos,
-        )
-
-    @mcp.tool()
     def delete_session(session_id: str) -> dict[str, Any]:
         """Delete a tank-operator session pod owned by the calling user.
 
