@@ -13,15 +13,10 @@ image:
   tag: "180a7f6"
   pullPolicy: IfNotPresent
 
-# Loopback-only port the Python uvicorn server listens on.
+# Port the Python uvicorn server binds (0.0.0.0) and the Service targets.
+# Reached directly via the Service — no kube-rbac-proxy sidecar fronts it;
+# authorization is the auth.romaine.life JWT validated by the orchestrator.
 upstreamPort: 8080
-
-proxy:
-  image:
-    repository: quay.io/brancz/kube-rbac-proxy
-    tag: v0.18.2
-    pullPolicy: IfNotPresent
-  port: 8443
 
 resources:
   requests:
@@ -29,13 +24,6 @@ resources:
     memory: 128Mi
   limits:
     memory: 256Mi
-
-proxyResources:
-  requests:
-    cpu: 10m
-    memory: 32Mi
-  limits:
-    memory: 64Mi
 
 # In-cluster URL to the tank-operator orchestrator. The MCP server uses a
 # dedicated projected service account token minted for the tank-operator

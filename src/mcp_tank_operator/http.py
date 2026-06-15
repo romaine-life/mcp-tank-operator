@@ -1,17 +1,24 @@
 """HTTP entrypoint — streamable-http transport.
 
-Inbound transport gate is kube-rbac-proxy in front of this process: it
-TokenReviews the calling pod's projected SA token + SubjectAccessReview
-against ``mcp.tank-operator.io/servers/tank-operator`` and only
-authorized requests reach this server. We bind loopback so direct
-pod-IP:8080 access bypasses nothing.
+Authorization is the auth.romaine.life service-principal JWT, not
+Kubernetes RBAC. The calling pod's mcp-auth-proxy sidecar forwards the
+JWT in ``X-Auth-Romaine-Token``; a Starlette middleware extracts it into
+the ``SERVICE_BEARER`` ContextVar and tool handlers thread it through to
+TankClient, which presents it as ``Authorization: Bearer`` on the
+outbound ``/api/internal/sessions/*`` call. The orchestrator verifies
+the JWT, gates on ``role=service``, and scopes every action to the
+JWT's ``actor_email`` — so a caller can only ever act as itself, and a
+request without a valid JWT is refused (tools raise a clean
+"service-principal authentication required"; the orchestrator rejects an
+invalid JWT outright).
 
-Per-caller identity is the auth.romaine.life service-principal JWT
-forwarded by the calling pod's mcp-auth-proxy sidecar in
-``X-Auth-Romaine-Token``. A Starlette middleware extracts it into the
-``SERVICE_BEARER`` ContextVar; tool handlers thread it through to
-TankClient. See romaine-life/tank-operator#486 for the rollout that
-retired the prior IP-tail identity path.
+There is no kube-rbac-proxy sidecar and no per-caller RBAC allowlist:
+that gate was removed because it enumerated individual service accounts
+(claude-session, the deleted hermes, and it could never cover dynamic
+Glimmung slot SAs) while the JWT path above is the real boundary. The
+server binds 0.0.0.0 and is reached directly via the ``mcp-tank-operator``
+Service. See romaine-life/tank-operator#486 for the rollout that retired
+the prior IP-tail identity path.
 """
 
 import logging
@@ -132,7 +139,9 @@ def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run(build_app(), host="127.0.0.1", port=port)
+    # Bind the pod network (not loopback): requests arrive directly on the
+    # Service now that no kube-rbac-proxy sidecar fronts this process.
+    uvicorn.run(build_app(), host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
