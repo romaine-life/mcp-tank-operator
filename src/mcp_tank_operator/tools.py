@@ -731,14 +731,18 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
 
         This is the "make new sessions inherit my branch" repoint. The slot's
         orchestrator stamps the override onto every session pod it creates from
-        now on — the same image lever production uses, no runtime overlay.
-        Glimmung's `apply_test_slot_hot_swap` patches ALREADY-running pods; this
-        complements it for the pods you haven't created yet.
+        now on — the same image lever production uses, no runtime overlay. It
+        only governs pods created after the repoint; a session pod already
+        running keeps the image it booted (there is no in-place patch of a live
+        session pod). Glimmung's `deploy_image_to_test_slot` is the separate
+        lever that deploys a branch's CI-built image to the slot's own
+        app/orchestrator surface.
 
-        Covers all three session-runner providers. Antigravity is the path with
-        no running-pod hot-swap (the Go antigravity-runner is not wired into
-        `apply_test_slot_hot_swap`), so this repoint + a fresh slot session is
-        the supported way to validate an antigravity-container branch on a slot.
+        Covers all three session-runner providers (codex / claude / antigravity).
+        Because a session pod's image is fixed at creation time, this repoint
+        plus a fresh slot session is the supported way to validate a
+        session-container branch — including an antigravity-container branch —
+        on a slot.
 
         Prerequisites:
           - The image must already exist in ACR. This tool does NOT build images:
