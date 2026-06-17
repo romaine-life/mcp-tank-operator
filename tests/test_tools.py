@@ -891,3 +891,37 @@ def test_get_session_url_routes_to_slot(mcp_client_pair) -> None:
     client.for_slot.assert_called_once_with("tank-operator-slot-2")
     slot_client.list_sessions.assert_called_once_with("jwt")
     assert result == {"session_id": "36", "url": "https://slot/36"}
+
+
+# ---------------------------------------------------------------------------
+# Migration guard — the retired test-slot "hot-swap" apply surface must not
+# reappear in any agent-facing tool description.
+#
+# Glimmung deleted ``apply_test_slot_hot_swap`` in the deploy-image-to-slot
+# cutover (romaine-life/glimmung → docs/test-slot-deploy-cutover.md); the live
+# replacement is ``deploy_image_to_test_slot``. A lingering reference in a tool
+# description makes an agent call a tool the Glimmung MCP server now rejects as
+# "Unknown tool" — the exact regression this guard exists to catch. Tokens are
+# assembled from fragments so the guard never matches itself.
+# ---------------------------------------------------------------------------
+
+_RETIRED_TEST_SLOT_TOOL_TOKENS = (
+    "apply_test_slot_" + "hot_swap",
+    "record_test_slot_" + "hot_swap",
+    "get_test_slot_" + "hot_swap_contract",
+)
+
+
+def test_no_retired_test_slot_hot_swap_surface_in_tool_descriptions(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    offenders: list[str] = []
+    for tool in mcp._tool_manager._tools.values():
+        haystack = f"{tool.name}\n{tool.description or ''}"
+        for token in _RETIRED_TEST_SLOT_TOOL_TOKENS:
+            if token in haystack:
+                offenders.append(f"{tool.name} → {token}")
+    assert not offenders, (
+        "retired test-slot hot-swap surface referenced in agent-facing tool "
+        "descriptions: " + "; ".join(offenders) + " — these tools were deleted "
+        "from Glimmung; use deploy_image_to_test_slot instead"
+    )
