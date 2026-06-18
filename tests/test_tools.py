@@ -420,7 +420,7 @@ def test_verify_spirelens_session_access_requires_session_target(mcp_client_pair
 
 
 # ---------------------------------------------------------------------------
-# delete_session / set_session_name / set_test_environment
+# delete_session / set_session_name
 # ---------------------------------------------------------------------------
 
 
@@ -443,26 +443,6 @@ def test_set_session_name_delegates_to_client(mcp_client_pair) -> None:
     client.set_session_name.assert_called_once_with("jwt", session_id="abc", name="new")
 
 
-def test_set_test_environment_delegates_to_client(mcp_client_pair) -> None:
-    mcp, client = mcp_client_pair
-    client.set_test_environment.return_value = {"id": "abc"}
-    fn = _get_tool(mcp, "set_test_environment")
-    with _bearer("jwt"), _caller_session("abc"):
-        fn(
-            slot_index=2,
-            url="https://slot-2",
-            pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
-        )
-    client.set_test_environment.assert_called_once_with(
-        "jwt",
-        session_id="abc",
-        active=True,
-        slot_index=2,
-        url="https://slot-2",
-        pull_request_url="https://github.com/romaine-life/tank-operator/pull/123",
-    )
-
-
 def test_set_pull_request_link_delegates_to_client(mcp_client_pair) -> None:
     mcp, client = mcp_client_pair
     client.set_pull_request_link.return_value = {"id": "abc"}
@@ -478,7 +458,6 @@ def test_set_pull_request_link_delegates_to_client(mcp_client_pair) -> None:
 
 def test_workflow_tools_do_not_accept_manual_session_id(mcp_client_pair) -> None:
     mcp, _client = mcp_client_pair
-    assert "session_id" not in _get_tool_object(mcp, "set_test_environment").parameters["properties"]
     assert "session_id" not in _get_tool_object(mcp, "set_pull_request_link").parameters["properties"]
 
 
@@ -923,5 +902,46 @@ def test_no_retired_test_slot_hot_swap_surface_in_tool_descriptions(mcp_client_p
     assert not offenders, (
         "retired test-slot hot-swap surface referenced in agent-facing tool "
         "descriptions: " + "; ".join(offenders) + " — these tools were deleted "
-        "from Glimmung; use deploy_image_to_test_slot instead"
+        "from Glimmung; test-slot provisioning is now deterministic and "
+        "server-side via Tank's Test button/endpoint"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Migration guard — the retired agent-facing test-slot provisioning tool
+# ``set_test_environment`` must not reappear.
+#
+# Test-slot provisioning is now deterministic and server-side: Tank's
+# ``POST /api/sessions/{id}/test-workflow/start`` button/endpoint validates
+# readiness and provisions the slot (lighting the GUI test pill server-side).
+# The agent no longer reserves slots and then reflects the pill by hand, so the
+# ``set_test_environment`` MCP wrapper was removed. The underlying
+# ``/api/sessions/{id}/test-state`` HTTP endpoint and the ``TankClient``
+# wrapper stay; only the agent-facing tool is gone. Token assembled from
+# fragments so the guard never matches itself.
+# ---------------------------------------------------------------------------
+
+_RETIRED_PROVISIONING_TOOL = "set_test_" + "environment"
+
+
+def test_retired_set_test_environment_tool_not_registered(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    names = {tool.name for tool in mcp._tool_manager._tools.values()}
+    assert _RETIRED_PROVISIONING_TOOL not in names, (
+        f"retired agent-facing provisioning tool {_RETIRED_PROVISIONING_TOOL!r} "
+        "is registered again — test-slot provisioning is deterministic and "
+        "server-side via Tank's Test button/endpoint; do not re-expose it"
+    )
+
+
+def test_no_retired_set_test_environment_surface_in_tool_descriptions(mcp_client_pair) -> None:
+    mcp, _ = mcp_client_pair
+    offenders: list[str] = []
+    for tool in mcp._tool_manager._tools.values():
+        haystack = f"{tool.name}\n{tool.description or ''}"
+        if _RETIRED_PROVISIONING_TOOL in haystack:
+            offenders.append(tool.name)
+    assert not offenders, (
+        "retired set_test_environment provisioning tool referenced in agent-"
+        "facing tool descriptions: " + "; ".join(offenders)
     )

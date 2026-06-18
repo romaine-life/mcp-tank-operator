@@ -511,28 +511,6 @@ def register_tools(mcp: FastMCP, client: TankClient) -> None:
         return client.set_session_name(_service_bearer(), session_id=session_id, name=name)
 
     @mcp.tool()
-    def set_test_environment(
-        slot_index: int | None = None,
-        url: str | None = None,
-        pull_request_url: str | None = None,
-        active: bool = True,
-    ) -> dict[str, Any]:
-        """Update the calling session's GUI test pill.
-
-        Call this after reserving a Glimmung test slot so the Tank UI can show
-        the beaker pill as active, display the slot number, and link to the
-        test environment. Pass active=False to clear the state.
-        """
-        return client.set_test_environment(
-            _service_bearer(),
-            session_id=_current_session_id(),
-            active=active,
-            slot_index=slot_index,
-            url=url,
-            pull_request_url=pull_request_url,
-        )
-
-    @mcp.tool()
     def set_pull_request_link(url: str | None) -> dict[str, Any]:
         """Update the calling session's GUI pull request link.
 
